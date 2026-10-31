@@ -1,0 +1,78 @@
+package net.spritzlive.securemessenger.ui
+
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import net.spritzlive.securemessenger.crypto.LibsignalSpike
+import net.spritzlive.securemessenger.pairing.ContactVerificationStore
+import net.spritzlive.securemessenger.ui.screens.PairingScreen
+import net.spritzlive.securemessenger.ui.screens.TextSizeScreen
+import net.spritzlive.securemessenger.ui.screens.ThreadScreen
+import net.spritzlive.securemessenger.ui.theme.SENIOR_FONT_SCALE
+import net.spritzlive.securemessenger.ui.theme.SecureMessengerTheme
+
+private const val TAG = "LibsignalSpike"
+
+private const val ROUTE_PAIRING = "pairing"
+private const val ROUTE_THREAD = "thread"
+private const val ROUTE_TEXTSIZE = "textsize"
+
+/**
+ * Phase 6: real NavHost. Start destination depends on whether a verified contact
+ * already exists (ContactVerificationStore) — unpaired starts at PairingScreen,
+ * already-paired goes straight to the thread. PairingScreen stays reachable from
+ * the thread's top bar afterward too (contact info / re-pair / safety number).
+ */
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            val fontScale by TextSizePreference.flow(applicationContext).collectAsState(initial = SENIOR_FONT_SCALE)
+
+            SecureMessengerTheme(fontScale = fontScale) {
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        val result = LibsignalSpike.runRoundTrip()
+                        val text = result.fold(
+                            onSuccess = { "PASS: $it" },
+                            onFailure = { "FAIL: ${it.javaClass.simpleName}: ${it.message}" },
+                        )
+                        Log.i(TAG, text)
+                    }
+                }
+
+                val navController = rememberNavController()
+                val startDestination = if (ContactVerificationStore(applicationContext).load() != null) {
+                    ROUTE_THREAD
+                } else {
+                    ROUTE_PAIRING
+                }
+
+                NavHost(navController = navController, startDestination = startDestination) {
+                    composable(ROUTE_PAIRING) {
+                        val canGoBack = navController.previousBackStackEntry != null
+                        PairingScreen(onBack = if (canGoBack) ({ navController.popBackStack() }) else null)
+                    }
+                    composable(ROUTE_THREAD) {
+                        ThreadScreen(
+                            onNavigateToPairing = { navController.navigate(ROUTE_PAIRING) },
+                            onNavigateToTextSize = { navController.navigate(ROUTE_TEXTSIZE) },
+                        )
+                    }
+                    composable(ROUTE_TEXTSIZE) {
+                        TextSizeScreen(onBack = { navController.popBackStack() })
+                    }
+                }
+            }
+        }
+    }
+}

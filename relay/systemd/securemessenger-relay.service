@@ -1,0 +1,28 @@
+[Unit]
+Description=Secure Messenger E2EE Relay
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/node /opt/securemessenger-relay/dist/server.js /opt/securemessenger-relay/config.json
+WorkingDirectory=/opt/securemessenger-relay
+User=securemessenger
+Group=securemessenger
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# No ReadWritePaths — this process has no reason to write anything, anywhere.
+StandardOutput=journal
+StandardError=journal
+# journald should only ever show lifecycle lines (start/stop/fatal) — never content.
+# If port 443 proves necessary instead of 8443 (some carriers/public WiFi block
+# non-80/443 outbound), uncomment these two lines instead of running the whole
+# process as root:
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

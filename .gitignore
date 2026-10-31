@@ -1,0 +1,44 @@
+# --- Gradle / build outputs ---
+.gradle/
+build/
+/build
+app/build/
+*/build/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+captures/
+release/
+dist/
+*.apk
+*.aab
+
+# --- Machine-specific / secrets (never commit) ---
+local.properties
+keystore.properties
+relay-config.properties
+maps.properties
+*.properties.local
+keystore/
+*.jks
+*.keystore
+google-services.json
+
+# --- Relay server secrets/config (never commit) ---
+relay/config.json
+relay/node_modules/
+relay/dist/
+relay/**/*.pem
+relay/**/*.key
+relay/**/*.crt
+relay/lantest/
+
+# --- IDE / tooling ---
+.idea/
+*.iml
+.claude/settings.local.json
+
+# --- OS / misc ---
+.DS_Store
+Thumbs.db
+*.log

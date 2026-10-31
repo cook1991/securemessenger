@@ -1,0 +1,13 @@
+{
+  "port": 8443,
+  "tlsCertPath": "/etc/securemessenger/relay-cert.pem",
+  "tlsKeyPath": "/etc/securemessenger/relay-key.pem",
+  "allowlist": [
+    { "peerId": "REPLACE_WITH_SHA256_HEX_OF_JASONS_RELAY_AUTH_PUBLIC_KEY", "label": "jason" },
+    { "peerId": "REPLACE_WITH_SHA256_HEX_OF_ERICS_RELAY_AUTH_PUBLIC_KEY", "label": "eric" }
+  ],
+  "queue": {
+    "maxMessagesPerPeer": 200,
+    "maxBytesPerPeer": 5242880
+  }
+}

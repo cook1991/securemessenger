@@ -1,0 +1,16 @@
+# Real deployed-relay coordinates (git-ignored as relay-config.properties).
+# Keeping these out of committed source matters precisely because this repo is
+# public: a hardcoded IP/cert/pin in source is readable by anyone browsing
+# GitHub, which defeats the whole point of using a self-signed cert over a
+# connect-by-IP address instead of a publicly-CA-issued one in the first place.
+# This has zero effect on anyone installing the built app -- the signed release
+# APK always has real values baked in; only the *source* stays generic.
+relay.host=203.0.113.10
+relay.port=8443
+relay.pinSha256Base64=BASE64_SPKI_PIN_HERE
+# Properties-file escaping: literal \n two-character sequences here become real
+# newlines once java.util.Properties parses this file, then get re-escaped back
+# to \n text for the generated BuildConfig.java, then unescaped back to real
+# newlines again by javac's own string-literal parsing -- so RelayConfig.kt
+# sees an ordinary multi-line PEM string at runtime with no extra code needed.
+relay.certPem=-----BEGIN CERTIFICATE-----\nPASTE_CERT_PEM_LINES_HERE_JOINED_WITH_LITERAL_BACKSLASH_N\n-----END CERTIFICATE-----

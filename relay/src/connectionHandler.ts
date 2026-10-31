@@ -1,0 +1,180 @@
+import * as crypto from 'node:crypto';
+import type { WebSocket, RawData } from 'ws';
+import type { RelayConfig } from './config.js';
+import type { PeerRegistry } from './peerRegistry.js';
+import type { OfflineQueue } from './queue.js';
+import type { BundleStore } from './bundleStore.js';
+import { parseClientMessage, type ClientToServer, type ServerToClient } from './protocol.js';
+import { verifyRegistration } from './auth.js';
+
+const NONCE_BYTES = 32;
+const MAX_FRAME_BYTES = 256 * 1024;
+
+export function handleConnection(
+  ws: WebSocket,
+  config: RelayConfig,
+  registry: PeerRegistry,
+  queue: OfflineQueue,
+  bundles: BundleStore,
+): void {
+  const nonce = crypto.randomBytes(NONCE_BYTES).toString('base64');
+  let registeredPeerId: string | null = null;
+
+  send(ws, { type: 'hello', nonce });
+
+  ws.on('message', (raw: RawData) => {
+    const text = raw.toString();
+    if (text.length > MAX_FRAME_BYTES) {
+      send(ws, { type: 'error', message: 'frame too large' });
+      ws.close();
+      return;
+    }
+
+    let msg: ClientToServer;
+    try {
+      msg = parseClientMessage(text);
+    } catch {
+      send(ws, { type: 'error', message: 'malformed frame' });
+      return;
+    }
+
+    switch (msg.type) {
+      case 'register': {
+        const peerId = verifyRegistration(msg, nonce, config.allowlist);
+        if (!peerId) {
+          send(ws, { type: 'error', message: 'not authorized' });
+          ws.close();
+          return;
+        }
+        registeredPeerId = peerId;
+        registry.setOnline(peerId, ws);
+        send(ws, { type: 'registered' });
+
+        for (const blob of queue.drain(peerId)) {
+          send(ws, {
+            type: 'deliver',
+            from: blob.from,
+            blobId: blob.blobId,
+            ciphertext: blob.ciphertext.toString('base64'),
+          });
+          blob.ciphertext.fill(0);
+        }
+        break;
+      }
+
+      case 'announce': {
+        if (!registeredPeerId) return;
+        registry.setCandidates(registeredPeerId, msg.candidates);
+        break;
+      }
+
+      case 'request-peer-address': {
+        if (!registeredPeerId) return;
+        const peer = registry.get(msg.peerId);
+        if (peer) {
+          send(ws, { type: 'peer-address', peerId: msg.peerId, candidates: peer.candidates });
+        } else {
+          send(ws, { type: 'peer-offline', peerId: msg.peerId });
+        }
+        break;
+      }
+
+      case 'candidate-exchange': {
+        if (!registeredPeerId) return;
+        const target = registry.get(msg.to);
+        if (target) {
+          send(target.socket, {
+            type: 'candidate-exchange',
+            from: registeredPeerId,
+            sessionId: msg.sessionId,
+            candidates: msg.candidates,
+          });
+        }
+        break;
+      }
+
+      case 'relay-blob': {
+        if (!registeredPeerId) return;
+        const target = registry.get(msg.to);
+        if (target) {
+          send(target.socket, {
+            type: 'relay-blob',
+            from: registeredPeerId,
+            blobId: msg.blobId,
+            ciphertext: msg.ciphertext,
+          });
+        } else {
+          queue.enqueue(msg.to, {
+            from: registeredPeerId,
+            blobId: msg.blobId,
+            ciphertext: Buffer.from(msg.ciphertext, 'base64'),
+          });
+        }
+        break;
+      }
+
+      case 'queue-blob': {
+        if (!registeredPeerId) return;
+        queue.enqueue(msg.to, {
+          from: registeredPeerId,
+          blobId: msg.blobId,
+          ciphertext: Buffer.from(msg.ciphertext, 'base64'),
+        });
+        break;
+      }
+
+      case 'delivery-ack': {
+        if (!registeredPeerId) return;
+        const target = registry.get(msg.to);
+        if (target) {
+          send(target.socket, {
+            type: 'delivery-ack',
+            from: registeredPeerId,
+            blobId: msg.blobId,
+            level: msg.level,
+          });
+        }
+        if (msg.level === 'transport') queue.drop(msg.to, msg.blobId);
+        break;
+      }
+
+      case 'ping': {
+        send(ws, { type: 'pong' });
+        break;
+      }
+
+      case 'publish-bundle': {
+        if (!registeredPeerId) return;
+        bundles.publish(registeredPeerId, msg.bundleB64);
+        break;
+      }
+
+      case 'fetch-bundle': {
+        if (!registeredPeerId) return;
+        const found = bundles.fetch(msg.peerId);
+        if (found) {
+          send(ws, { type: 'bundle', peerId: msg.peerId, bundleB64: found });
+        } else {
+          send(ws, { type: 'bundle-not-found', peerId: msg.peerId });
+        }
+        break;
+      }
+    }
+  });
+
+  ws.on('close', () => {
+    if (registeredPeerId) registry.setOffline(registeredPeerId, ws);
+  });
+
+  ws.on('error', () => {
+    // Never log the error object itself — it can embed socket/connection details.
+  });
+}
+
+function send(ws: WebSocket, msg: ServerToClient): void {
+  try {
+    ws.send(JSON.stringify(msg));
+  } catch {
+    // Socket already closing — nothing to do.
+  }
+}

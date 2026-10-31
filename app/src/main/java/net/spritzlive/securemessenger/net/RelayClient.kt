@@ -1,0 +1,178 @@
+package net.spritzlive.securemessenger.net
+
+import android.util.Base64
+import android.util.Log
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import net.spritzlive.securemessenger.crypto.RelayAuthKeyStore
+import okhttp3.CertificatePinner
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+
+private const val TAG = "RelayClient"
+
+/**
+ * The `hello` -> `register` -> `registered` handshake, plus live/queued blob
+ * send+receive. Candidate-exchange (direct P2P signaling) isn't wired yet — relay-blob
+ * is the only transport path so far, which matches the plan's Phase 2 priority
+ * (guaranteed relay delivery solid before optimizing for direct P2P). Full
+ * NetworkRepository/RelayConnectionService wiring comes later.
+ *
+ * The relay's cert is deliberately self-signed (connect-by-IP, no public CA, no
+ * Certificate Transparency exposure — see the plan), so the default platform trust
+ * manager would reject it outright before CertificatePinner even runs. [trustedCertPem]
+ * is the one cert this client trusts as its sole anchor; the SPKI pin on top of that
+ * is defense-in-depth against a future swap of that anchor file.
+ */
+class RelayClient(
+    private val host: String,
+    private val port: Int,
+    private val pinSha256Base64: String,
+    private val trustedCertPem: String,
+    private val auth: RelayAuthKeyStore,
+) {
+    private var webSocket: WebSocket? = null
+    var onStateChange: ((String) -> Unit)? = null
+
+    /** Phase 3 groundwork: fires for both live `relay-blob` forwards and queued
+     * `deliver` flushes — same fields, same handling either way. */
+    var onBlob: ((from: String, ciphertext: ByteArray) -> Unit)? = null
+
+    /** Fires once this device's `register` has been accepted — the earliest safe
+     * point to send anything, since the socket exists but isn't usable before this. */
+    var onRegistered: (() -> Unit)? = null
+
+    /** Remote (voice-code) pairing only — see VoiceCodePairing. */
+    var onBundle: ((peerId: String, bundleB64: String) -> Unit)? = null
+    var onBundleNotFound: ((peerId: String) -> Unit)? = null
+
+    fun publishBundle(bundleB64: String) {
+        val message = buildJsonObject {
+            put("type", "publish-bundle")
+            put("bundleB64", bundleB64)
+        }
+        webSocket?.send(message.toString())
+    }
+
+    fun fetchBundle(peerId: String) {
+        val message = buildJsonObject {
+            put("type", "fetch-bundle")
+            put("peerId", peerId)
+        }
+        webSocket?.send(message.toString())
+    }
+
+    fun sendBlob(to: String, ciphertext: ByteArray) {
+        val blobId = java.util.UUID.randomUUID().toString()
+        val message = buildJsonObject {
+            put("type", "relay-blob")
+            put("to", to)
+            put("blobId", blobId)
+            put("ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+        }
+        webSocket?.send(message.toString())
+    }
+
+    fun connect() {
+        val trustManager = buildTrustManager(trustedCertPem)
+        val sslContext = SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf(trustManager), null)
+        }
+        val pinner = CertificatePinner.Builder()
+            .add(host, "sha256/$pinSha256Base64")
+            .build()
+        val client = OkHttpClient.Builder()
+            .sslSocketFactory(sslContext.socketFactory, trustManager)
+            .certificatePinner(pinner)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+        val request = Request.Builder().url("wss://$host:$port/").build()
+        webSocket = client.newWebSocket(request, listener)
+    }
+
+    private fun buildTrustManager(certPem: String): X509TrustManager {
+        val cert = CertificateFactory.getInstance("X.509").generateCertificate(certPem.byteInputStream())
+        val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null, null)
+            setCertificateEntry("relay", cert)
+        }
+        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        tmf.init(keyStore)
+        return tmf.trustManagers.filterIsInstance<X509TrustManager>().first()
+    }
+
+    fun close() {
+        webSocket?.close(1000, "client closing")
+    }
+
+    private val listener = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            report("ws open")
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            // Log-only, not forwarded to onStateChange: a relay-blob/deliver frame
+            // carries the full ciphertext inline, and onStateChange feeds a short
+            // connection-status indicator in the UI, not a protocol dump.
+            Log.i(TAG, "recv: $text")
+            val msg = Json.parseToJsonElement(text).jsonObject
+            when (msg["type"]?.jsonPrimitive?.content) {
+                "hello" -> {
+                    val nonce = msg["nonce"]!!.jsonPrimitive.content
+                    val nonceBytes = Base64.decode(nonce, Base64.NO_WRAP)
+                    val signature = Base64.encodeToString(auth.sign(nonceBytes), Base64.NO_WRAP)
+                    val publicKeyB64 = Base64.encodeToString(auth.publicKeyRaw, Base64.NO_WRAP)
+                    val register = buildJsonObject {
+                        put("type", "register")
+                        put("publicKey", publicKeyB64)
+                        put("nonce", nonce)
+                        put("signature", signature)
+                    }
+                    webSocket.send(register.toString())
+                }
+                "registered" -> {
+                    report("REGISTERED as ${auth.peerId}")
+                    onRegistered?.invoke()
+                }
+                "relay-blob", "deliver" -> {
+                    val from = msg["from"]!!.jsonPrimitive.content
+                    val ciphertext = Base64.decode(msg["ciphertext"]!!.jsonPrimitive.content, Base64.NO_WRAP)
+                    onBlob?.invoke(from, ciphertext)
+                }
+                "bundle" -> {
+                    val peerId = msg["peerId"]!!.jsonPrimitive.content
+                    val bundleB64 = msg["bundleB64"]!!.jsonPrimitive.content
+                    onBundle?.invoke(peerId, bundleB64)
+                }
+                "bundle-not-found" -> onBundleNotFound?.invoke(msg["peerId"]!!.jsonPrimitive.content)
+                "error" -> report("SERVER ERROR: ${msg["message"]?.jsonPrimitive?.content}")
+                else -> report("unhandled message type")
+            }
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            report("ws failure: ${t.javaClass.simpleName}: ${t.message}")
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            report("ws closed: $code $reason")
+        }
+    }
+
+    private fun report(text: String) {
+        Log.i(TAG, text)
+        onStateChange?.invoke(text)
+    }
+}
