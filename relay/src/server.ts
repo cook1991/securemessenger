@@ -34,13 +34,39 @@ const registry = new PeerRegistry();
 const queue = new OfflineQueue(config.queue.maxMessagesPerPeer, config.queue.maxBytesPerPeer);
 const bundles = new BundleStore();
 
-wss.on('connection', (ws) => handleConnection(ws, config, registry, queue, bundles));
+// A dead TCP connection (NAT idle timeout, app killed, network loss) doesn't
+// always surface a 'close' event promptly — nothing reads/writes the socket
+// until the next message, so it can sit registered-but-unreachable
+// indefinitely. That "zombie" state is exactly what let a relay-blob get
+// silently dropped instead of queued (see connectionHandler.ts). This sweep
+// pings every connection every 30s and terminates any that didn't pong since
+// the last sweep, bounding how long a zombie entry can survive to ~60s.
+const alive = new WeakMap<import('ws').WebSocket, boolean>();
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+wss.on('connection', (ws) => {
+  alive.set(ws, true);
+  ws.on('pong', () => alive.set(ws, true));
+  handleConnection(ws, config, registry, queue, bundles);
+});
+
+const heartbeatTimer = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (alive.get(ws) === false) {
+      ws.terminate();
+      continue;
+    }
+    alive.set(ws, false);
+    ws.ping();
+  }
+}, HEARTBEAT_INTERVAL_MS);
 
 httpsServer.listen(config.port, () => {
   logLifecycle(`listening on ${config.port}`);
 });
 
 process.on('SIGTERM', () => {
+  clearInterval(heartbeatTimer);
   logLifecycle('SIGTERM received, shutting down');
   process.exit(0);
 });

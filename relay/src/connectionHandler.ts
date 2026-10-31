@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
-import type { WebSocket, RawData } from 'ws';
+import { WebSocket } from 'ws';
+import type { RawData } from 'ws';
 import type { RelayConfig } from './config.js';
 import type { PeerRegistry } from './peerRegistry.js';
 import type { OfflineQueue } from './queue.js';
@@ -96,7 +97,14 @@ export function handleConnection(
       case 'relay-blob': {
         if (!registeredPeerId) return;
         const target = registry.get(msg.to);
-        if (target) {
+        // A registry entry can outlive its socket: the TCP connection can die
+        // (NAT timeout, app killed, network loss) before the server's 'close'
+        // event has fired, leaving a "zombie" entry that looks online. Forwarding
+        // to a non-OPEN socket would otherwise be silently swallowed by send()'s
+        // catch block, dropping the message instead of queuing it — a direct
+        // violation of guaranteed delivery. Checking readyState here closes that
+        // window; the heartbeat sweep in server.ts bounds how long it can stay open.
+        if (target && target.socket.readyState === WebSocket.OPEN) {
           send(target.socket, {
             type: 'relay-blob',
             from: registeredPeerId,

@@ -16,12 +16,16 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.security.KeyStore
 import java.security.cert.CertificateFactory
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 
 private const val TAG = "RelayClient"
+private const val INITIAL_RECONNECT_DELAY_MS = 2_000L
+private const val MAX_RECONNECT_DELAY_MS = 60_000L
 
 /**
  * The `hello` -> `register` -> `registered` handshake, plus live/queued blob
@@ -45,6 +49,20 @@ class RelayClient(
 ) {
     private var webSocket: WebSocket? = null
     var onStateChange: ((String) -> Unit)? = null
+
+    // Observed live (2026-10-31): the ws connection can die silently (idle NAT
+    // timeout, network handoff) with no automatic recovery — the app sat
+    // disconnected until manually relaunched, during which a peer's message to
+    // it was neither delivered nor queued (relay-side gap fixed separately).
+    // This reconnects with capped exponential backoff on any non-deliberate
+    // close/failure, so the socket comes back on its own instead of requiring
+    // a relaunch.
+    private val reconnectScheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "RelayClient-reconnect").apply { isDaemon = true }
+    }
+    private var reconnectTask: ScheduledFuture<*>? = null
+    private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+    private var intentionalClose = false
 
     /** Phase 3 groundwork: fires for both live `relay-blob` forwards and queued
      * `deliver` flushes — same fields, same handling either way. */
@@ -86,6 +104,8 @@ class RelayClient(
     }
 
     fun connect() {
+        intentionalClose = false
+        reconnectTask?.cancel(false)
         val trustManager = buildTrustManager(trustedCertPem)
         val sslContext = SSLContext.getInstance("TLS").apply {
             init(null, arrayOf(trustManager), null)
@@ -114,11 +134,25 @@ class RelayClient(
     }
 
     fun close() {
+        intentionalClose = true
+        reconnectTask?.cancel(false)
         webSocket?.close(1000, "client closing")
+    }
+
+    private fun scheduleReconnect() {
+        if (intentionalClose) return
+        reconnectTask?.cancel(false)
+        reconnectTask = reconnectScheduler.schedule(
+            { connect() },
+            reconnectDelayMs,
+            TimeUnit.MILLISECONDS,
+        )
+        reconnectDelayMs = (reconnectDelayMs * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
     }
 
     private val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
+            reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
             report("ws open")
         }
 
@@ -164,10 +198,12 @@ class RelayClient(
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             report("ws failure: ${t.javaClass.simpleName}: ${t.message}")
+            scheduleReconnect()
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             report("ws closed: $code $reason")
+            scheduleReconnect()
         }
     }
 
