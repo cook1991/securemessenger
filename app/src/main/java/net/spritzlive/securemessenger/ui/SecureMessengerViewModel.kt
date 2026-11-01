@@ -44,6 +44,7 @@ class SecureMessengerViewModel(application: Application) : AndroidViewModel(appl
             _peerDisplayName.value = r.displayName
             r.onStateChange = { line -> _status.value = line }
             r.onMessagesChanged = { refresh() }
+            _status.value = r.currentState
             refresh()
         }
 

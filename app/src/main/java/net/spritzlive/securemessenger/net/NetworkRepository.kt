@@ -45,6 +45,12 @@ class NetworkRepository(context: Context) {
     /** Transport/connection state lines (ws open/closed, registered, errors) — for a status indicator, not content. */
     var onStateChange: ((String) -> Unit)? = null
 
+    /** Latest state line, same text an onStateChange subscriber would have seen —
+     * lets a late-binding UI (e.g. reopening the app onto an already-connected
+     * service) seed itself immediately instead of waiting for the next transition. */
+    var currentState: String = "connecting"
+        private set
+
     /** Fires after any local mutation (send, receive, shred) — callers should re-call [loadThread]. */
     var onMessagesChanged: (() -> Unit)? = null
 
@@ -64,8 +70,8 @@ class NetworkRepository(context: Context) {
             trustedCertPem = RelayConfig.CERT_PEM,
             auth = auth,
         )
-        relayClient.onStateChange = { onStateChange?.invoke(it) }
-        relayClient.onRegistered = { onStateChange?.invoke("connected") }
+        relayClient.onStateChange = { currentState = it; onStateChange?.invoke(it) }
+        relayClient.onRegistered = { currentState = "connected"; onStateChange?.invoke("connected") }
         relayClient.onBlob = { from, ciphertext ->
             runCatching { sessionManager.decrypt(ciphertext) }
                 .onSuccess { body ->
