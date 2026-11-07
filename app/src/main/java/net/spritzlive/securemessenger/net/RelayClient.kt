@@ -157,11 +157,13 @@ class RelayClient(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            // Log-only, not forwarded to onStateChange: a relay-blob/deliver frame
-            // carries the full ciphertext inline, and onStateChange feeds a short
-            // connection-status indicator in the UI, not a protocol dump.
-            Log.i(TAG, "recv: $text")
             val msg = Json.parseToJsonElement(text).jsonObject
+            // Log-only, not forwarded to onStateChange: onStateChange feeds a short
+            // connection-status indicator in the UI, not a protocol dump. Logs just
+            // the frame type, not the raw text — a relay-blob/deliver frame's full
+            // text carries the sender's peerId and ciphertext, which don't belong in
+            // on-device logcat even though the relay can't read either.
+            Log.i(TAG, "recv: ${msg["type"]?.jsonPrimitive?.content}")
             when (msg["type"]?.jsonPrimitive?.content) {
                 "hello" -> {
                     val nonce = msg["nonce"]!!.jsonPrimitive.content
