@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +19,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
@@ -48,6 +51,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.spritzlive.securemessenger.data.Message
+import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.net.RelayConnectionService
 import net.spritzlive.securemessenger.ui.SecureMessengerViewModel
 import java.text.SimpleDateFormat
@@ -203,11 +207,31 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
                     color = textColor,
                     textAlign = TextAlign.Start,
                 )
-                Text(
-                    timeText,
-                    color = textColor,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        timeText,
+                        color = textColor,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    if (message.outgoing && !message.shredded) {
+                        val icon = when (message.status) {
+                            MessageStatus.SENT -> Icons.Filled.Done
+                            MessageStatus.DELIVERED, MessageStatus.READ -> Icons.Filled.DoneAll
+                            else -> null
+                        }
+                        if (icon != null) {
+                            // Same glyph for DELIVERED and READ, brighter tint only
+                            // once a human actually opened the thread — matches the
+                            // single/double/colored-double tick pattern elsewhere.
+                            val tint = if (message.status == MessageStatus.READ) {
+                                MaterialTheme.colorScheme.tertiary
+                            } else {
+                                textColor
+                            }
+                            Icon(icon, contentDescription = message.status.name, tint = tint, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
             }
         }
     }
