@@ -8,18 +8,18 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import net.spritzlive.securemessenger.R
 
 private const val CHANNEL_ID = "securemessenger_messages"
 private const val FOREGROUND_NOTIFICATION_ID = 1
 private const val MESSAGE_NOTIFICATION_ID = 2
+const val KEY_TEXT_REPLY = "key_text_reply"
 
 /**
- * Tap-to-open notifications only for this pass — no inline-reply (RemoteInput +
- * a BroadcastReceiver to thread a reply back through NetworkRepository from outside
- * the Service's own context) — deliberately deferred as a follow-up once background
- * delivery itself is confirmed working, same reasoning as RelayConnectionService's
- * own doc comment.
+ * Tap-to-open, plus a RemoteInput reply action handled by ReplyReceiver — see that
+ * class's doc for how a reply gets from the notification shade back into
+ * NetworkRepository without opening the app.
  */
 object Notifications {
     fun ensureChannel(context: Context) {
@@ -55,6 +55,18 @@ object Notifications {
             intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY).setLabel("Reply").build()
+        val replyPendingIntent = PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(context, ReplyReceiver::class.java),
+            // Must be MUTABLE, unlike the tap-to-open intent above — RemoteInput
+            // writes its result into this intent's own extras.
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val replyAction = NotificationCompat.Action.Builder(R.drawable.ic_reply, "Reply", replyPendingIntent)
+            .addRemoteInput(remoteInput)
+            .build()
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(peerDisplayName)
             .setContentText(body)
@@ -62,8 +74,13 @@ object Notifications {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .addAction(replyAction)
             .build()
         NotificationManagerCompat.from(context).notify(MESSAGE_NOTIFICATION_ID, notification)
+    }
+
+    fun dismissIncoming(context: Context) {
+        NotificationManagerCompat.from(context).cancel(MESSAGE_NOTIFICATION_ID)
     }
 
     const val FOREGROUND_ID = FOREGROUND_NOTIFICATION_ID
