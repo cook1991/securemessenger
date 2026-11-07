@@ -3,6 +3,7 @@ package net.spritzlive.securemessenger.storage
 import android.content.Context
 import net.spritzlive.securemessenger.crypto.wipe
 import net.spritzlive.securemessenger.data.Message
+import net.spritzlive.securemessenger.data.MessageKind
 import net.spritzlive.securemessenger.data.MessageStatus
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -23,10 +24,11 @@ class CryptoShredRepository(context: Context) {
 
     fun store(
         peerId: String,
-        body: String,
+        bodyBytes: ByteArray,
         date: Long,
         outgoing: Boolean,
         status: MessageStatus,
+        kind: MessageKind = MessageKind.TEXT,
         receivedBlobId: String? = null,
     ): Long {
         val (keyId, keyBytes) = keyStore.generateAndStoreKey()
@@ -34,8 +36,8 @@ class CryptoShredRepository(context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"))
             val iv = cipher.iv
-            val ciphertext = cipher.doFinal(body.toByteArray(Charsets.UTF_8))
-            return db.insertMessage(peerId, date, outgoing, status, keyId, iv, ciphertext, receivedBlobId)
+            val ciphertext = cipher.doFinal(bodyBytes)
+            return db.insertMessage(peerId, date, outgoing, status, keyId, iv, ciphertext, kind, receivedBlobId)
         } finally {
             keyBytes.wipe()
         }
@@ -93,14 +95,25 @@ class CryptoShredRepository(context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(GCM_TAG_BITS, iv))
             val plaintext = cipher.doFinal(ciphertext)
-            val body = String(plaintext, Charsets.UTF_8)
-            plaintext.wipe()
-            return Message(id, peerId, body, date, outgoing, status, keyId, shredded = false)
+            return when (kind) {
+                MessageKind.TEXT -> {
+                    val body = String(plaintext, Charsets.UTF_8)
+                    plaintext.wipe()
+                    Message(id, peerId, body, date, outgoing, status, keyId, shredded = false, kind = MessageKind.TEXT)
+                }
+                // Not wiped: the UI needs these bytes to render the image, a
+                // deliberate, documented relaxation of the wipe-promptly convention
+                // used for text above.
+                MessageKind.IMAGE -> Message(
+                    id, peerId, "", date, outgoing, status, keyId, shredded = false,
+                    kind = MessageKind.IMAGE, imageBytes = plaintext,
+                )
+            }
         } finally {
             keyBytes.wipe()
         }
     }
 
     private fun RawMessageRow.tombstone(): Message =
-        Message(id, peerId, "", date, outgoing, status, keyId, shredded = true)
+        Message(id, peerId, "", date, outgoing, status, keyId, shredded = true, kind = kind)
 }

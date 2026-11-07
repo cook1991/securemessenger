@@ -79,9 +79,9 @@ class NetworkRepository(context: Context) {
             runCatching { sessionManager.decrypt(ciphertext) }
                 .onSuccess { plaintextBytes ->
                     val body = String(plaintextBytes, Charsets.UTF_8)
-                    plaintextBytes.wipe()
-                    repo.store(from, body, System.currentTimeMillis(), outgoing = false,
+                    repo.store(from, plaintextBytes, System.currentTimeMillis(), outgoing = false,
                         status = MessageStatus.RECEIVED, receivedBlobId = blobId)
+                    plaintextBytes.wipe()
                     relayClient.sendDeliveryAck(from, blobId, "app")
                     onMessagesChanged?.invoke()
                     onIncomingMessage?.invoke(body)
@@ -108,7 +108,7 @@ class NetworkRepository(context: Context) {
     fun loadThread(): List<Message> = repo.loadThread(peerId)
 
     fun sendMessage(body: String) {
-        val id = repo.store(peerId, body, System.currentTimeMillis(), outgoing = true, status = MessageStatus.SENDING)
+        val id = repo.store(peerId, body.toByteArray(Charsets.UTF_8), System.currentTimeMillis(), outgoing = true, status = MessageStatus.SENDING)
         onMessagesChanged?.invoke()
         val wireBytes = sessionManager.encrypt(body.toByteArray(Charsets.UTF_8))
         val blobId = relayClient.sendBlob(peerId, wireBytes)

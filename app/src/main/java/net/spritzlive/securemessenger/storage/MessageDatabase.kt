@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import net.spritzlive.securemessenger.data.MessageKind
 import net.spritzlive.securemessenger.data.MessageStatus
 
 /** Raw row as stored — ciphertext, not plaintext. CryptoShredRepository does the decrypting. */
@@ -17,6 +18,7 @@ data class RawMessageRow(
     val iv: ByteArray,
     val ciphertext: ByteArray,
     val shredded: Boolean,
+    val kind: MessageKind,
 )
 
 data class KeyRow(val wrapIv: ByteArray, val wrappedKey: ByteArray)
@@ -29,7 +31,7 @@ data class KeyRow(val wrapIv: ByteArray, val wrappedKey: ByteArray)
  * is the actual crypto-shred; this class only stores/retrieves bytes, no crypto here.
  */
 class MessageDatabase(context: Context) :
-    SQLiteOpenHelper(context, "securemessenger_messages.db", null, 2) {
+    SQLiteOpenHelper(context, "securemessenger_messages.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -46,7 +48,8 @@ class MessageDatabase(context: Context) :
                 shredded INTEGER NOT NULL DEFAULT 0,
                 sent_blob_id TEXT,
                 received_blob_id TEXT,
-                read_ack_sent INTEGER NOT NULL DEFAULT 0
+                read_ack_sent INTEGER NOT NULL DEFAULT 0,
+                kind TEXT NOT NULL DEFAULT 'TEXT'
             )
             """.trimIndent(),
         )
@@ -64,14 +67,17 @@ class MessageDatabase(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // First real migration this app has ever needed — plain ALTER TABLE ADD
-        // COLUMN, no data rewrite, every new column nullable/defaulted, so this is
-        // safe to run once against Jason's and Eric's existing message history.
+        // Plain ALTER TABLE ADD COLUMN each time, no data rewrite, every new column
+        // nullable/defaulted — safe to run once against Jason's and Eric's existing
+        // message history. One migration per phase, not bundled together.
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE messages ADD COLUMN sent_blob_id TEXT")
             db.execSQL("ALTER TABLE messages ADD COLUMN received_blob_id TEXT")
             db.execSQL("ALTER TABLE messages ADD COLUMN read_ack_sent INTEGER NOT NULL DEFAULT 0")
             db.execSQL("CREATE INDEX idx_messages_sent_blob_id ON messages(sent_blob_id)")
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'TEXT'")
         }
     }
 
@@ -83,6 +89,7 @@ class MessageDatabase(context: Context) :
         keyId: String,
         iv: ByteArray,
         ciphertext: ByteArray,
+        kind: MessageKind = MessageKind.TEXT,
         receivedBlobId: String? = null,
     ): Long {
         val values = ContentValues().apply {
@@ -95,6 +102,7 @@ class MessageDatabase(context: Context) :
             put("ciphertext", ciphertext)
             put("shredded", 0)
             put("received_blob_id", receivedBlobId)
+            put("kind", kind.name)
         }
         return writableDatabase.insertOrThrow("messages", null, values)
     }
@@ -217,5 +225,6 @@ class MessageDatabase(context: Context) :
         iv = getBlob(getColumnIndexOrThrow("iv")),
         ciphertext = getBlob(getColumnIndexOrThrow("ciphertext")),
         shredded = getInt(getColumnIndexOrThrow("shredded")) != 0,
+        kind = MessageKind.valueOf(getString(getColumnIndexOrThrow("kind"))),
     )
 }
