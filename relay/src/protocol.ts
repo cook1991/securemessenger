@@ -44,7 +44,9 @@ export interface DeliveryAckMessage {
   type: 'delivery-ack';
   to: string;
   blobId: string;
-  level: 'transport' | 'app'; // transport = socket delivered it; app = peer decrypted it
+  // transport = socket delivered it; app = peer decrypted it; read = peer's human
+  // opened the thread — distinct from 'app', which fires automatically on decrypt.
+  level: 'transport' | 'app' | 'read';
 }
 export interface PingMessage {
   type: 'ping';
@@ -78,7 +80,7 @@ export type ServerToClient =
   | { type: 'candidate-exchange'; from: string; sessionId: string; candidates: Candidate[] }
   | { type: 'relay-blob'; from: string; blobId: string; ciphertext: string }
   | { type: 'deliver'; from: string; blobId: string; ciphertext: string }
-  | { type: 'delivery-ack'; from: string; blobId: string; level: 'transport' | 'app' }
+  | { type: 'delivery-ack'; from: string; blobId: string; level: 'transport' | 'app' | 'read' }
   | { type: 'pong' }
   | { type: 'bundle'; peerId: string; bundleB64: string }
   | { type: 'bundle-not-found'; peerId: string }
@@ -125,7 +127,7 @@ export function parseClientMessage(raw: string): ClientToServer {
     case 'delivery-ack':
       assertString(o.to);
       assertString(o.blobId);
-      if (o.level !== 'transport' && o.level !== 'app') throw new Error('bad level');
+      if (o.level !== 'transport' && o.level !== 'app' && o.level !== 'read') throw new Error('bad level');
       return o as unknown as DeliveryAckMessage;
     case 'ping':
       return o as unknown as PingMessage;
