@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -133,6 +134,19 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
             }
     }
 
+    // The "Scanned"/"Found" confirmation card is the last thing added to the
+    // column when a peer is found, which put it below the fold on real devices
+    // and caused real confusion during live pairing (looked like the fetch had
+    // silently failed) — see PairingScreen's known-follow-up note. Scroll it
+    // into view instead of leaving it to the user to discover by scrolling.
+    val scrollState = rememberScrollState()
+    LaunchedEffect(scannedPeer) {
+        if (scannedPeer != null) scrollState.animateScrollTo(scrollState.maxValue)
+    }
+    LaunchedEffect(voicePeer) {
+        if (voicePeer != null) scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -150,7 +164,7 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
 
     Column(modifier = Modifier.fillMaxSize()) {
     Column(
-        modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp),
+        modifier = Modifier.weight(1f).verticalScroll(scrollState).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
