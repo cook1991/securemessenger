@@ -28,17 +28,18 @@ import net.spritzlive.securemessenger.net.RelayConfig
  * only ever starts from ThreadScreen, which isn't reachable pre-pairing), so there's
  * no conflict.
  *
- * Known limitation, confirmed on real hardware: using "Re-pair (overwrite)" while
- * already paired opens a SECOND connection registered under the same peerId
+ * Fixed limitation, confirmed on real hardware: using "Re-pair (overwrite)" while
+ * already paired used to open a SECOND connection registered under the same peerId
  * alongside RelayConnectionService's already-running one. The relay's PeerRegistry
- * keeps only one live socket per peerId (last register wins), so while this screen
- * is open, incoming messages route here instead of to the service — and this class
- * doesn't handle relay-blob, so they're silently dropped rather than queued (the
- * relay still thinks the peer is online). Closing this screen restores normal
- * delivery; anything sent during that window needs a resend. Not a risk for the
- * primary first-time-pairing path, which is what matters for getting a new device
- * paired — worth a proper fix (e.g. routing pairing through the existing connection
- * when one's already live) before this re-pair path sees real everyday use.
+ * keeps only one live socket per peerId (last register wins), so while the pairing
+ * screen was open, incoming messages routed here instead of to the service — and
+ * this class doesn't handle relay-blob, so they were silently dropped rather than
+ * queued (the relay still thought the peer was online). PairingScreen now stops
+ * RelayConnectionService before connecting this class's RelayClient (a no-op when
+ * that service isn't running, i.e. the primary first-time-pairing path), so only
+ * one socket is ever registered under this device's peerId — any message sent
+ * during a re-pair now gets queued by the relay like any other offline peer,
+ * instead of being dropped.
  */
 class VoiceCodePairing(context: Context) {
     private val relayAuth = RelayAuthKeyStore(context)

@@ -2,6 +2,7 @@ package net.spritzlive.securemessenger.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import net.spritzlive.securemessenger.crypto.RelayAuthKeyStore
 import net.spritzlive.securemessenger.crypto.SignalIdentityStore
+import net.spritzlive.securemessenger.net.RelayConnectionService
 import net.spritzlive.securemessenger.pairing.ContactVerificationStore
 import net.spritzlive.securemessenger.pairing.LocalProfileStore
 import net.spritzlive.securemessenger.pairing.QrPairing
@@ -92,6 +94,13 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
     DisposableEffect(voicePairing) {
         val vp = voicePairing
         if (vp != null) {
+            // The main app connection (RelayConnectionService) registers under this
+            // device's peerId too, and the relay keeps only the most recent
+            // registration live — without stopping it first, this second connection
+            // would silently steal incoming messages instead of the relay queuing
+            // them (see VoiceCodePairing's class doc). No-op if that service isn't
+            // running, which covers the primary first-time-pairing path.
+            context.stopService(Intent(context, RelayConnectionService::class.java))
             vp.onStateChange = { voiceStatus = it }
             vp.onRegistered = { voiceRegistered = true }
             vp.onPeerFound = { peer ->
