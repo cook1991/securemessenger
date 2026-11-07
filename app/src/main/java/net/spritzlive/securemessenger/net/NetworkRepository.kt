@@ -4,6 +4,7 @@ import android.content.Context
 import net.spritzlive.securemessenger.crypto.RelayAuthKeyStore
 import net.spritzlive.securemessenger.crypto.SessionRecordStore
 import net.spritzlive.securemessenger.crypto.SignalIdentityStore
+import net.spritzlive.securemessenger.crypto.wipe
 import net.spritzlive.securemessenger.data.Message
 import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.pairing.ContactVerificationStore
@@ -76,7 +77,9 @@ class NetworkRepository(context: Context) {
         relayClient.onRegistered = { currentState = "connected"; onStateChange?.invoke("connected") }
         relayClient.onBlob = { from, blobId, ciphertext ->
             runCatching { sessionManager.decrypt(ciphertext) }
-                .onSuccess { body ->
+                .onSuccess { plaintextBytes ->
+                    val body = String(plaintextBytes, Charsets.UTF_8)
+                    plaintextBytes.wipe()
                     repo.store(from, body, System.currentTimeMillis(), outgoing = false,
                         status = MessageStatus.RECEIVED, receivedBlobId = blobId)
                     relayClient.sendDeliveryAck(from, blobId, "app")
@@ -107,7 +110,7 @@ class NetworkRepository(context: Context) {
     fun sendMessage(body: String) {
         val id = repo.store(peerId, body, System.currentTimeMillis(), outgoing = true, status = MessageStatus.SENDING)
         onMessagesChanged?.invoke()
-        val wireBytes = sessionManager.encrypt(body)
+        val wireBytes = sessionManager.encrypt(body.toByteArray(Charsets.UTF_8))
         val blobId = relayClient.sendBlob(peerId, wireBytes)
         repo.updateSentBlobId(id, blobId)
         repo.updateStatus(id, MessageStatus.SENT)

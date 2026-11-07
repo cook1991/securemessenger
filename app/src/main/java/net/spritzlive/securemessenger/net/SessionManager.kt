@@ -43,21 +43,25 @@ class SessionManager(
         }
     }
 
-    fun encrypt(plaintext: String): ByteArray {
+    /** Wipes [plaintext] before returning, same as always — caller must not reuse it. */
+    fun encrypt(plaintext: ByteArray): ByteArray {
         if (!store.containsSession(remoteAddress)) {
             SessionBuilder(store, remoteAddress).process(remoteBundle)
         }
         val cipher = SessionCipher(store, remoteAddress)
-        val plaintextBytes = plaintext.toByteArray(Charsets.UTF_8)
-        val ciphertextMessage = cipher.encrypt(plaintextBytes)
-        plaintextBytes.wipe()
+        val ciphertextMessage = cipher.encrypt(plaintext)
+        plaintext.wipe()
         persistSession()
 
         val typeTag = if (ciphertextMessage.type == CiphertextMessage.PREKEY_TYPE) WIRE_TYPE_PREKEY else WIRE_TYPE_WHISPER
         return byteArrayOf(typeTag) + ciphertextMessage.serialize()
     }
 
-    fun decrypt(wireBytes: ByteArray): String {
+    /** Ownership inverts here versus [encrypt]: this now returns live plaintext
+     * bytes the CALLER owns and must wipe once done (previously this class wiped
+     * internally before returning a String copy — a String can't be wiped, and an
+     * image's plaintext bytes need to survive long enough for the UI to render). */
+    fun decrypt(wireBytes: ByteArray): ByteArray {
         val typeTag = wireBytes[0]
         val body = wireBytes.copyOfRange(1, wireBytes.size)
         val cipher = SessionCipher(store, remoteAddress)
@@ -67,9 +71,7 @@ class SessionManager(
             else -> error("unknown wire type tag $typeTag")
         }
         persistSession()
-        val text = String(plaintextBytes, Charsets.UTF_8)
-        plaintextBytes.wipe()
-        return text
+        return plaintextBytes
     }
 
     private fun persistSession() {
