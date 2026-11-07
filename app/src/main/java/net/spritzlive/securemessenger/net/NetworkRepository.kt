@@ -6,10 +6,17 @@ import net.spritzlive.securemessenger.crypto.SessionRecordStore
 import net.spritzlive.securemessenger.crypto.SignalIdentityStore
 import net.spritzlive.securemessenger.crypto.wipe
 import net.spritzlive.securemessenger.data.Message
+import net.spritzlive.securemessenger.data.MessageKind
 import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.pairing.ContactVerificationStore
 import net.spritzlive.securemessenger.pairing.QrPairing
 import net.spritzlive.securemessenger.storage.CryptoShredRepository
+
+// Mirrors the relay's raised MAX_CIPHERTEXT_B64 (~900_000 base64 chars) with
+// headroom for base64 inflation (~33%) and the JSON envelope around it — a
+// pre-send check here means an oversized photo fails immediately and visibly
+// instead of being rejected by the relay with no blobId to correlate back to.
+private const val MAX_IMAGE_PLAINTEXT_BYTES = 650_000
 
 /**
  * Ties RelayClient + SessionManager + CryptoShredRepository + the paired contact
@@ -77,14 +84,16 @@ class NetworkRepository(context: Context) {
         relayClient.onRegistered = { currentState = "connected"; onStateChange?.invoke("connected") }
         relayClient.onBlob = { from, blobId, ciphertext ->
             runCatching { sessionManager.decrypt(ciphertext) }
-                .onSuccess { plaintextBytes ->
-                    val body = String(plaintextBytes, Charsets.UTF_8)
-                    repo.store(from, plaintextBytes, System.currentTimeMillis(), outgoing = false,
-                        status = MessageStatus.RECEIVED, receivedBlobId = blobId)
-                    plaintextBytes.wipe()
+                .onSuccess { envelope ->
+                    val (kindByte, payload) = MessageEnvelope.unwrap(envelope)
+                    val kind = if (kindByte == MessageEnvelope.KIND_IMAGE) MessageKind.IMAGE else MessageKind.TEXT
+                    repo.store(from, payload, System.currentTimeMillis(), outgoing = false,
+                        status = MessageStatus.RECEIVED, kind = kind, receivedBlobId = blobId)
+                    val notifyText = if (kind == MessageKind.TEXT) String(payload, Charsets.UTF_8) else "Photo"
+                    payload.wipe()
                     relayClient.sendDeliveryAck(from, blobId, "app")
                     onMessagesChanged?.invoke()
-                    onIncomingMessage?.invoke(body)
+                    onIncomingMessage?.invoke(notifyText)
                 }
                 .onFailure { e ->
                     onStateChange?.invoke("decrypt failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -107,14 +116,34 @@ class NetworkRepository(context: Context) {
 
     fun loadThread(): List<Message> = repo.loadThread(peerId)
 
-    fun sendMessage(body: String) {
-        val id = repo.store(peerId, body.toByteArray(Charsets.UTF_8), System.currentTimeMillis(), outgoing = true, status = MessageStatus.SENDING)
+    private fun sendPayload(kind: Byte, payloadBytes: ByteArray) {
+        val messageKind = if (kind == MessageEnvelope.KIND_IMAGE) MessageKind.IMAGE else MessageKind.TEXT
+        val id = repo.store(peerId, payloadBytes, System.currentTimeMillis(), outgoing = true,
+            status = MessageStatus.SENDING, kind = messageKind)
         onMessagesChanged?.invoke()
-        val wireBytes = sessionManager.encrypt(body.toByteArray(Charsets.UTF_8))
+        val wireBytes = sessionManager.encrypt(MessageEnvelope.wrap(kind, payloadBytes))
         val blobId = relayClient.sendBlob(peerId, wireBytes)
         repo.updateSentBlobId(id, blobId)
         repo.updateStatus(id, MessageStatus.SENT)
         onMessagesChanged?.invoke()
+    }
+
+    fun sendMessage(body: String) {
+        sendPayload(MessageEnvelope.KIND_TEXT, body.toByteArray(Charsets.UTF_8))
+    }
+
+    /** Returns false (storing nothing) if [jpegBytes] is already over the relay's
+     * cap — the caller should surface this as a visible error rather than let it
+     * disappear into a send that the relay will reject anyway. */
+    fun sendImage(jpegBytes: ByteArray): Boolean {
+        if (jpegBytes.size > MAX_IMAGE_PLAINTEXT_BYTES) {
+            repo.store(peerId, ByteArray(0), System.currentTimeMillis(), outgoing = true,
+                status = MessageStatus.FAILED, kind = MessageKind.IMAGE)
+            onMessagesChanged?.invoke()
+            return false
+        }
+        sendPayload(MessageEnvelope.KIND_IMAGE, jpegBytes)
+        return true
     }
 
     fun shred(messageId: Long) {
