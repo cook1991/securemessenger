@@ -46,6 +46,11 @@ class SecureMessengerViewModel(application: Application) : AndroidViewModel(appl
             r.onMessagesChanged = { refresh() }
             _status.value = r.currentState
             refresh()
+            // ThreadScreen already calls markRead() when isThreadVisible flips true,
+            // but bindService's callback is asynchronous — if that flip happened
+            // before this fired, markRead() would have no-op'd against a still-null
+            // repo. Covers that race for whatever arrived before binding completed.
+            markRead()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -77,6 +82,10 @@ class SecureMessengerViewModel(application: Application) : AndroidViewModel(appl
 
     fun shred(id: Long) {
         viewModelScope.launch(Dispatchers.IO) { repo?.shred(id) }
+    }
+
+    fun markRead() {
+        viewModelScope.launch(Dispatchers.IO) { repo?.markThreadRead() }
     }
 
     private fun refresh() {

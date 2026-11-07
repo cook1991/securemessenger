@@ -71,6 +71,7 @@ fun ThreadScreen(
     DisposableEffect(Unit) {
         vm.bind()
         RelayConnectionService.isThreadVisible = true
+        vm.markRead()
         onDispose {
             RelayConnectionService.isThreadVisible = false
             vm.unbind()
@@ -85,7 +86,7 @@ fun ThreadScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> RelayConnectionService.isThreadVisible = true
+                Lifecycle.Event.ON_START -> { RelayConnectionService.isThreadVisible = true; vm.markRead() }
                 Lifecycle.Event.ON_STOP -> RelayConnectionService.isThreadVisible = false
                 else -> {}
             }

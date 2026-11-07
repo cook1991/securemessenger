@@ -27,9 +27,11 @@ import net.spritzlive.securemessenger.storage.CryptoShredRepository
  * foreground path is confirmed working end-to-end on real hardware, rather than
  * bundling both into one untested change.
  *
- * Delivery status is optimistic: a sent message is marked SENT once handed to the
- * relay socket, not once the peer's device actually decrypts it. Real DELIVERED
- * tracking needs the relay's delivery-ack message type wired through — not done yet.
+ * Delivery/read status: a sent message starts SENT once handed to the relay
+ * socket, then advances to DELIVERED on a "transport" or "app" delivery-ack and to
+ * READ once the peer's thread is actually visible (see markThreadRead) — see
+ * CryptoShredRepository.advanceStatus for why acks can never move a status
+ * backward.
  */
 class NetworkRepository(context: Context) {
     private val verifiedContact = ContactVerificationStore(context).load()
@@ -72,16 +74,28 @@ class NetworkRepository(context: Context) {
         )
         relayClient.onStateChange = { currentState = it; onStateChange?.invoke(it) }
         relayClient.onRegistered = { currentState = "connected"; onStateChange?.invoke("connected") }
-        relayClient.onBlob = { from, _, ciphertext ->
+        relayClient.onBlob = { from, blobId, ciphertext ->
             runCatching { sessionManager.decrypt(ciphertext) }
                 .onSuccess { body ->
-                    repo.store(from, body, System.currentTimeMillis(), outgoing = false, status = MessageStatus.RECEIVED)
+                    repo.store(from, body, System.currentTimeMillis(), outgoing = false,
+                        status = MessageStatus.RECEIVED, receivedBlobId = blobId)
+                    relayClient.sendDeliveryAck(from, blobId, "app")
                     onMessagesChanged?.invoke()
                     onIncomingMessage?.invoke(body)
                 }
                 .onFailure { e ->
                     onStateChange?.invoke("decrypt failed: ${e.javaClass.simpleName}: ${e.message}")
                 }
+        }
+        relayClient.onDeliveryAck = { _, blobId, level ->
+            val id = repo.findIdBySentBlobId(blobId)
+            if (id != null) {
+                when (level) {
+                    "transport", "app" -> repo.advanceStatus(id, MessageStatus.DELIVERED)
+                    "read" -> repo.advanceStatus(id, MessageStatus.READ)
+                }
+                onMessagesChanged?.invoke()
+            }
         }
     }
 
@@ -94,7 +108,8 @@ class NetworkRepository(context: Context) {
         val id = repo.store(peerId, body, System.currentTimeMillis(), outgoing = true, status = MessageStatus.SENDING)
         onMessagesChanged?.invoke()
         val wireBytes = sessionManager.encrypt(body)
-        relayClient.sendBlob(peerId, wireBytes)
+        val blobId = relayClient.sendBlob(peerId, wireBytes)
+        repo.updateSentBlobId(id, blobId)
         repo.updateStatus(id, MessageStatus.SENT)
         onMessagesChanged?.invoke()
     }
@@ -102,5 +117,16 @@ class NetworkRepository(context: Context) {
     fun shred(messageId: Long) {
         repo.shred(messageId)
         onMessagesChanged?.invoke()
+    }
+
+    /** Sends a deferred 'read' ack for every incoming message this device has
+     * decrypted but hasn't yet told the peer a human actually looked at — call this
+     * when the thread becomes visible, not at decrypt time (that's the separate
+     * 'app' ack in onBlob above). */
+    fun markThreadRead() {
+        for ((id, blobId) in repo.loadUnackedReceivedBlobIds(peerId)) {
+            relayClient.sendDeliveryAck(peerId, blobId, "read")
+            repo.markReadAckSent(id)
+        }
     }
 }
