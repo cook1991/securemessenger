@@ -29,7 +29,7 @@ data class KeyRow(val wrapIv: ByteArray, val wrappedKey: ByteArray)
  * is the actual crypto-shred; this class only stores/retrieves bytes, no crypto here.
  */
 class MessageDatabase(context: Context) :
-    SQLiteOpenHelper(context, "securemessenger_messages.db", null, 1) {
+    SQLiteOpenHelper(context, "securemessenger_messages.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -43,11 +43,15 @@ class MessageDatabase(context: Context) :
                 key_id TEXT NOT NULL,
                 iv BLOB NOT NULL,
                 ciphertext BLOB NOT NULL,
-                shredded INTEGER NOT NULL DEFAULT 0
+                shredded INTEGER NOT NULL DEFAULT 0,
+                sent_blob_id TEXT,
+                received_blob_id TEXT,
+                read_ack_sent INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX idx_messages_peer_date ON messages(peer_id, date)")
+        db.execSQL("CREATE INDEX idx_messages_sent_blob_id ON messages(sent_blob_id)")
         db.execSQL(
             """
             CREATE TABLE message_keys (
@@ -60,7 +64,15 @@ class MessageDatabase(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // No prior schema version exists yet.
+        // First real migration this app has ever needed — plain ALTER TABLE ADD
+        // COLUMN, no data rewrite, every new column nullable/defaulted, so this is
+        // safe to run once against Jason's and Eric's existing message history.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN sent_blob_id TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN received_blob_id TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN read_ack_sent INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX idx_messages_sent_blob_id ON messages(sent_blob_id)")
+        }
     }
 
     fun insertMessage(
@@ -71,6 +83,7 @@ class MessageDatabase(context: Context) :
         keyId: String,
         iv: ByteArray,
         ciphertext: ByteArray,
+        receivedBlobId: String? = null,
     ): Long {
         val values = ContentValues().apply {
             put("peer_id", peerId)
@@ -81,12 +94,46 @@ class MessageDatabase(context: Context) :
             put("iv", iv)
             put("ciphertext", ciphertext)
             put("shredded", 0)
+            put("received_blob_id", receivedBlobId)
         }
         return writableDatabase.insertOrThrow("messages", null, values)
     }
 
     fun updateStatus(id: Long, status: MessageStatus) {
         val values = ContentValues().apply { put("status", status.name) }
+        writableDatabase.update("messages", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    fun updateSentBlobId(id: Long, blobId: String) {
+        val values = ContentValues().apply { put("sent_blob_id", blobId) }
+        writableDatabase.update("messages", values, "id = ?", arrayOf(id.toString()))
+    }
+
+    fun findIdBySentBlobId(blobId: String): Long? {
+        writableDatabase.query(
+            "messages", arrayOf("id"), "sent_blob_id = ?", arrayOf(blobId), null, null, null,
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            return cursor.getLong(0)
+        }
+    }
+
+    /** Incoming messages this device has decrypted but hasn't yet told the peer a
+     *  human actually opened the thread to see — see NetworkRepository.markThreadRead. */
+    fun loadUnackedReceivedBlobIds(peerId: String): List<Pair<Long, String>> {
+        val rows = ArrayList<Pair<Long, String>>()
+        writableDatabase.query(
+            "messages", arrayOf("id", "received_blob_id"),
+            "peer_id = ? AND outgoing = 0 AND read_ack_sent = 0 AND received_blob_id IS NOT NULL",
+            arrayOf(peerId), null, null, null,
+        ).use { cursor ->
+            while (cursor.moveToNext()) rows.add(cursor.getLong(0) to cursor.getString(1))
+        }
+        return rows
+    }
+
+    fun markReadAckSent(id: Long) {
+        val values = ContentValues().apply { put("read_ack_sent", 1) }
         writableDatabase.update("messages", values, "id = ?", arrayOf(id.toString()))
     }
 

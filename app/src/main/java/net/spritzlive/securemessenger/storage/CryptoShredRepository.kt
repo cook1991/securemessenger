@@ -21,14 +21,21 @@ class CryptoShredRepository(context: Context) {
     private val db = MessageDatabase(context)
     private val keyStore = MessageKeyStore(db)
 
-    fun store(peerId: String, body: String, date: Long, outgoing: Boolean, status: MessageStatus): Long {
+    fun store(
+        peerId: String,
+        body: String,
+        date: Long,
+        outgoing: Boolean,
+        status: MessageStatus,
+        receivedBlobId: String? = null,
+    ): Long {
         val (keyId, keyBytes) = keyStore.generateAndStoreKey()
         try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(keyBytes, "AES"))
             val iv = cipher.iv
             val ciphertext = cipher.doFinal(body.toByteArray(Charsets.UTF_8))
-            return db.insertMessage(peerId, date, outgoing, status, keyId, iv, ciphertext)
+            return db.insertMessage(peerId, date, outgoing, status, keyId, iv, ciphertext, receivedBlobId)
         } finally {
             keyBytes.wipe()
         }
@@ -36,6 +43,36 @@ class CryptoShredRepository(context: Context) {
 
     fun updateStatus(id: Long, status: MessageStatus) {
         db.updateStatus(id, status)
+    }
+
+    fun updateSentBlobId(id: Long, blobId: String) {
+        db.updateSentBlobId(id, blobId)
+    }
+
+    fun findIdBySentBlobId(blobId: String): Long? = db.findIdBySentBlobId(blobId)
+
+    fun loadUnackedReceivedBlobIds(peerId: String): List<Pair<Long, String>> =
+        db.loadUnackedReceivedBlobIds(peerId)
+
+    fun markReadAckSent(id: Long) {
+        db.markReadAckSent(id)
+    }
+
+    private val statusRank = mapOf(
+        MessageStatus.SENDING to 0,
+        MessageStatus.SENT to 1,
+        MessageStatus.DELIVERED to 2,
+        MessageStatus.READ to 3,
+    )
+
+    /** Only ever moves an outgoing message's status forward (SENDING→SENT→DELIVERED→READ)
+     *  — acks can arrive out of order or duplicated, and a late 'transport' ack must
+     *  never stomp a status that already advanced to READ. */
+    fun advanceStatus(id: Long, candidate: MessageStatus) {
+        val current = db.loadMessageById(id)?.status ?: return
+        val currentRank = statusRank[current] ?: return
+        val candidateRank = statusRank[candidate] ?: return
+        if (candidateRank > currentRank) db.updateStatus(id, candidate)
     }
 
     fun loadThread(peerId: String): List<Message> =

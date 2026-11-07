@@ -1,6 +1,6 @@
 package net.spritzlive.securemessenger.data
 
-enum class MessageStatus { SENDING, SENT, DELIVERED, RECEIVED, FAILED }
+enum class MessageStatus { SENDING, SENT, DELIVERED, READ, RECEIVED, FAILED }
 
 /**
  * [body] is empty and [shredded] is true once the message's key has been destroyed
