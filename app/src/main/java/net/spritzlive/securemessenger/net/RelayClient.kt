@@ -66,11 +66,15 @@ class RelayClient(
 
     /** Phase 3 groundwork: fires for both live `relay-blob` forwards and queued
      * `deliver` flushes — same fields, same handling either way. */
-    var onBlob: ((from: String, ciphertext: ByteArray) -> Unit)? = null
+    var onBlob: ((from: String, blobId: String, ciphertext: ByteArray) -> Unit)? = null
 
     /** Fires once this device's `register` has been accepted — the earliest safe
      * point to send anything, since the socket exists but isn't usable before this. */
     var onRegistered: (() -> Unit)? = null
+
+    /** A peer's receipt of something this device sent — see sendDeliveryAck's doc
+     * for what `level` means. */
+    var onDeliveryAck: ((from: String, blobId: String, level: String) -> Unit)? = null
 
     /** Remote (voice-code) pairing only — see VoiceCodePairing. */
     var onBundle: ((peerId: String, bundleB64: String) -> Unit)? = null
@@ -92,13 +96,29 @@ class RelayClient(
         webSocket?.send(message.toString())
     }
 
-    fun sendBlob(to: String, ciphertext: ByteArray) {
+    /** Returns the blobId it generated, so the caller can correlate a later
+     * delivery-ack back to the local row this blob was sent for. */
+    fun sendBlob(to: String, ciphertext: ByteArray): String {
         val blobId = java.util.UUID.randomUUID().toString()
         val message = buildJsonObject {
             put("type", "relay-blob")
             put("to", to)
             put("blobId", blobId)
             put("ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+        }
+        webSocket?.send(message.toString())
+        return blobId
+    }
+
+    /** `level`: "transport" (socket delivered it — sent immediately on receipt,
+     * before decryption even starts), "app" (this device decrypted it), or "read"
+     * (a human actually opened the thread — see NetworkRepository.markThreadRead). */
+    fun sendDeliveryAck(to: String, blobId: String, level: String) {
+        val message = buildJsonObject {
+            put("type", "delivery-ack")
+            put("to", to)
+            put("blobId", blobId)
+            put("level", level)
         }
         webSocket?.send(message.toString())
     }
@@ -184,8 +204,18 @@ class RelayClient(
                 }
                 "relay-blob", "deliver" -> {
                     val from = msg["from"]!!.jsonPrimitive.content
+                    val blobId = msg["blobId"]!!.jsonPrimitive.content
+                    // Fired immediately on receipt, independent of decrypt success —
+                    // "transport" means the socket got it, nothing more.
+                    sendDeliveryAck(from, blobId, "transport")
                     val ciphertext = Base64.decode(msg["ciphertext"]!!.jsonPrimitive.content, Base64.NO_WRAP)
-                    onBlob?.invoke(from, ciphertext)
+                    onBlob?.invoke(from, blobId, ciphertext)
+                }
+                "delivery-ack" -> {
+                    val from = msg["from"]!!.jsonPrimitive.content
+                    val blobId = msg["blobId"]!!.jsonPrimitive.content
+                    val level = msg["level"]!!.jsonPrimitive.content
+                    onDeliveryAck?.invoke(from, blobId, level)
                 }
                 "bundle" -> {
                     val peerId = msg["peerId"]!!.jsonPrimitive.content

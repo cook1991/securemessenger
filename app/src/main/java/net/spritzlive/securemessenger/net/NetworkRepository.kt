@@ -72,7 +72,7 @@ class NetworkRepository(context: Context) {
         )
         relayClient.onStateChange = { currentState = it; onStateChange?.invoke(it) }
         relayClient.onRegistered = { currentState = "connected"; onStateChange?.invoke("connected") }
-        relayClient.onBlob = { from, ciphertext ->
+        relayClient.onBlob = { from, _, ciphertext ->
             runCatching { sessionManager.decrypt(ciphertext) }
                 .onSuccess { body ->
                     repo.store(from, body, System.currentTimeMillis(), outgoing = false, status = MessageStatus.RECEIVED)
