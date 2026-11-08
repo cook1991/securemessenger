@@ -1,5 +1,6 @@
 import { createServer } from 'node:https';
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
 import { PeerRegistry } from './peerRegistry.js';
@@ -15,6 +16,10 @@ if (!configPath) {
 }
 
 const config = loadConfig(configPath);
+// Invite-redemption state lives in its own subdirectory, never inside config.json —
+// see invites.ts. This is the one thing the relay process writes to disk; the
+// systemd unit grants ReadWritePaths to exactly this directory and nothing else.
+const statePath = join(dirname(configPath), 'state', 'invites.jsonl');
 
 // https, not a bare tls.Server: the WebSocket upgrade handshake happens at the HTTP
 // layer (an HTTP Upgrade request), so `ws` needs an HTTP(S) server to attach to —
@@ -47,7 +52,7 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 wss.on('connection', (ws) => {
   alive.set(ws, true);
   ws.on('pong', () => alive.set(ws, true));
-  handleConnection(ws, config, registry, queue, bundles);
+  handleConnection(ws, config, registry, queue, bundles, statePath);
 });
 
 const heartbeatTimer = setInterval(() => {

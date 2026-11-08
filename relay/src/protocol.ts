@@ -59,6 +59,13 @@ export interface FetchBundleMessage {
   type: 'fetch-bundle';
   peerId: string;
 }
+export interface RedeemInviteMessage {
+  type: 'redeem-invite';
+  publicKey: string; // base64, raw 32-byte Ed25519 relay-auth public key — same as register
+  nonce: string; // base64, must echo the server's `hello` nonce
+  signature: string; // base64, Ed25519 signature over the raw nonce bytes
+  token: string; // the human-typed invite code, as entered (normalized server-side)
+}
 
 export type ClientToServer =
   | RegisterMessage
@@ -70,7 +77,8 @@ export type ClientToServer =
   | DeliveryAckMessage
   | PingMessage
   | PublishBundleMessage
-  | FetchBundleMessage;
+  | FetchBundleMessage
+  | RedeemInviteMessage;
 
 export type ServerToClient =
   | { type: 'hello'; nonce: string }
@@ -95,6 +103,9 @@ const MAX_CANDIDATES = 8;
 // QrPairing's own doc) — base64'd that's under 3KB. 20KB is generous headroom, not a
 // size budget being relied on.
 const MAX_BUNDLE_B64 = 20_000;
+// Invite codes are 24 base32 chars grouped with dashes (~29 chars) — 64 is generous
+// headroom for whatever separators/whitespace a human typing it in adds.
+const MAX_TOKEN_LENGTH = 64;
 
 export function parseClientMessage(raw: string): ClientToServer {
   const obj: unknown = JSON.parse(raw);
@@ -139,6 +150,13 @@ export function parseClientMessage(raw: string): ClientToServer {
     case 'fetch-bundle':
       assertString(o.peerId);
       return o as unknown as FetchBundleMessage;
+    case 'redeem-invite':
+      assertString(o.publicKey);
+      assertString(o.nonce);
+      assertString(o.signature);
+      assertString(o.token);
+      if ((o.token as string).length > MAX_TOKEN_LENGTH) throw new Error('token too long');
+      return o as unknown as RedeemInviteMessage;
     default:
       throw new Error(`unknown type ${String(o.type)}`);
   }

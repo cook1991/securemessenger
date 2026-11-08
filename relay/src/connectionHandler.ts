@@ -6,7 +6,8 @@ import type { PeerRegistry } from './peerRegistry.js';
 import type { OfflineQueue } from './queue.js';
 import type { BundleStore } from './bundleStore.js';
 import { parseClientMessage, type ClientToServer, type ServerToClient } from './protocol.js';
-import { verifyRegistration } from './auth.js';
+import { verifyRegistration, verifyInviteRedemption } from './auth.js';
+import { recordRedemption } from './invites.js';
 
 const NONCE_BYTES = 32;
 // Checked on the raw JSON text, before protocol.ts's own MAX_CIPHERTEXT_B64 even
@@ -21,6 +22,7 @@ export function handleConnection(
   registry: PeerRegistry,
   queue: OfflineQueue,
   bundles: BundleStore,
+  statePath: string,
 ): void {
   const nonce = crypto.randomBytes(NONCE_BYTES).toString('base64');
   let registeredPeerId: string | null = null;
@@ -43,27 +45,48 @@ export function handleConnection(
       return;
     }
 
+    // Shared tail of a successful register/redeem-invite: mark this socket online
+    // under its new peerId, confirm it, and hand over anything that queued while it
+    // was offline — identical regardless of which path got it here.
+    const completeHandshake = (peerId: string): void => {
+      registeredPeerId = peerId;
+      registry.setOnline(peerId, ws);
+      send(ws, { type: 'registered' });
+
+      for (const blob of queue.drain(peerId)) {
+        send(ws, {
+          type: 'deliver',
+          from: blob.from,
+          blobId: blob.blobId,
+          ciphertext: blob.ciphertext.toString('base64'),
+        });
+        blob.ciphertext.fill(0);
+      }
+    };
+
     switch (msg.type) {
       case 'register': {
-        const peerId = verifyRegistration(msg, nonce, config.allowlist);
+        const peerId = verifyRegistration(msg, nonce, config.allowlist, statePath);
         if (!peerId) {
           send(ws, { type: 'error', message: 'not authorized' });
           ws.close();
           return;
         }
-        registeredPeerId = peerId;
-        registry.setOnline(peerId, ws);
-        send(ws, { type: 'registered' });
+        completeHandshake(peerId);
+        break;
+      }
 
-        for (const blob of queue.drain(peerId)) {
-          send(ws, {
-            type: 'deliver',
-            from: blob.from,
-            blobId: blob.blobId,
-            ciphertext: blob.ciphertext.toString('base64'),
-          });
-          blob.ciphertext.fill(0);
+      case 'redeem-invite': {
+        const result = verifyInviteRedemption(msg, nonce, statePath);
+        if (!result) {
+          send(ws, { type: 'error', message: 'not authorized' });
+          ws.close();
+          return;
         }
+        // Only now, with the whole handshake having actually succeeded, does the
+        // one-time code get burned — see verifyInviteRedemption's own doc comment.
+        recordRedemption(statePath, result.tokenHash, result.peerId);
+        completeHandshake(result.peerId);
         break;
       }
 
