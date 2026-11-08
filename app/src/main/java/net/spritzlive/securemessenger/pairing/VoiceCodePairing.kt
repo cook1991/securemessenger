@@ -62,6 +62,10 @@ class VoiceCodePairing(context: Context) {
         get() = relayClient.onRegistered
         set(value) { relayClient.onRegistered = value }
 
+    var onAuthRejected: (() -> Unit)?
+        get() = relayClient.onAuthRejected
+        set(value) { relayClient.onAuthRejected = value }
+
     var onPeerFound: ((QrPairing.ScannedPeer) -> Unit)? = null
     var onPeerNotFound: ((String) -> Unit)? = null
 
@@ -74,7 +78,9 @@ class VoiceCodePairing(context: Context) {
         relayClient.onBundleNotFound = { peerId -> onPeerNotFound?.invoke(peerId) }
     }
 
-    fun connect() = relayClient.connect()
+    /** [inviteToken]: set when this device isn't allowlisted yet and the person is
+     * redeeming an admin-issued code instead of a plain register. */
+    fun connect(inviteToken: String? = null) = relayClient.connect(inviteToken)
     fun close() = relayClient.close()
 
     fun publishMyBundle(displayName: String) {

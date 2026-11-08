@@ -64,6 +64,17 @@ class RelayClient(
     private var reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
     private var intentionalClose = false
 
+    // Set the moment the server explicitly rejects a register/redeem-invite attempt
+    // with "not authorized" -- distinct from intentionalClose (user asked to
+    // disconnect) and from a plain network blip (where retrying makes sense). Without
+    // this, a rejected connection kept retrying the same doomed register forever: the
+    // backoff timer would silently open a new socket with the stale, token-less
+    // register call behind the UI's back, racing whatever the user just tried after
+    // entering an invite code. Cleared at the top of connect() so an explicit retry
+    // (with or without a token) always gets a fresh chance.
+    private var authRejected = false
+    private var pendingInviteToken: String? = null
+
     /** Phase 3 groundwork: fires for both live `relay-blob` forwards and queued
      * `deliver` flushes — same fields, same handling either way. */
     var onBlob: ((from: String, blobId: String, ciphertext: ByteArray) -> Unit)? = null
@@ -71,6 +82,12 @@ class RelayClient(
     /** Fires once this device's `register` has been accepted — the earliest safe
      * point to send anything, since the socket exists but isn't usable before this. */
     var onRegistered: (() -> Unit)? = null
+
+    /** Fires when the relay explicitly rejects this device — unrecognized peerId, bad
+     * signature, or an invalid invite token (the relay deliberately never says which).
+     * Stops the automatic reconnect loop until the next explicit connect() call, so a
+     * caller can surface "you need an invite code" instead of silently spinning. */
+    var onAuthRejected: (() -> Unit)? = null
 
     /** A peer's receipt of something this device sent — see sendDeliveryAck's doc
      * for what `level` means. */
@@ -123,8 +140,12 @@ class RelayClient(
         webSocket?.send(message.toString())
     }
 
-    fun connect() {
+    /** [inviteToken], when present, is sent as a one-shot `redeem-invite` instead of
+     * the normal `register` for this connection attempt — see VoiceCodePairing. */
+    fun connect(inviteToken: String? = null) {
         intentionalClose = false
+        authRejected = false
+        pendingInviteToken = inviteToken
         reconnectTask?.cancel(false)
         val trustManager = buildTrustManager(trustedCertPem)
         val sslContext = SSLContext.getInstance("TLS").apply {
@@ -160,7 +181,7 @@ class RelayClient(
     }
 
     private fun scheduleReconnect() {
-        if (intentionalClose) return
+        if (intentionalClose || authRejected) return
         reconnectTask?.cancel(false)
         reconnectTask = reconnectScheduler.schedule(
             { connect() },
@@ -190,13 +211,15 @@ class RelayClient(
                     val nonceBytes = Base64.decode(nonce, Base64.NO_WRAP)
                     val signature = Base64.encodeToString(auth.sign(nonceBytes), Base64.NO_WRAP)
                     val publicKeyB64 = Base64.encodeToString(auth.publicKeyRaw, Base64.NO_WRAP)
-                    val register = buildJsonObject {
-                        put("type", "register")
+                    val token = pendingInviteToken
+                    val outgoing = buildJsonObject {
+                        put("type", if (token != null) "redeem-invite" else "register")
                         put("publicKey", publicKeyB64)
                         put("nonce", nonce)
                         put("signature", signature)
+                        if (token != null) put("token", token)
                     }
-                    webSocket.send(register.toString())
+                    webSocket.send(outgoing.toString())
                 }
                 "registered" -> {
                     report("REGISTERED as ${auth.peerId}")
@@ -223,7 +246,14 @@ class RelayClient(
                     onBundle?.invoke(peerId, bundleB64)
                 }
                 "bundle-not-found" -> onBundleNotFound?.invoke(msg["peerId"]!!.jsonPrimitive.content)
-                "error" -> report("SERVER ERROR: ${msg["message"]?.jsonPrimitive?.content}")
+                "error" -> {
+                    val message = msg["message"]?.jsonPrimitive?.content
+                    report("SERVER ERROR: $message")
+                    if (message == "not authorized") {
+                        authRejected = true
+                        onAuthRejected?.invoke()
+                    }
+                }
                 else -> report("unhandled message type")
             }
         }
