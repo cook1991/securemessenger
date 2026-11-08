@@ -28,8 +28,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -303,21 +301,23 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
                         style = MaterialTheme.typography.labelSmall,
                     )
                     if (message.outgoing && !message.shredded) {
-                        val icon = when (message.status) {
-                            MessageStatus.SENT -> Icons.Filled.Done
-                            MessageStatus.DELIVERED, MessageStatus.READ -> Icons.Filled.DoneAll
+                        val label = when (message.status) {
+                            MessageStatus.SENT -> "Sent"
+                            MessageStatus.DELIVERED -> "Delivered"
+                            MessageStatus.READ -> "Seen"
                             else -> null
                         }
-                        if (icon != null) {
-                            // Same glyph for DELIVERED and READ, brighter tint only
-                            // once a human actually opened the thread — matches the
-                            // single/double/colored-double tick pattern elsewhere.
+                        if (label != null) {
+                            // Words instead of tick glyphs — confirmed live that a
+                            // plain double-check was easy to miss/misread; "Seen"
+                            // brighter-tinted still marks the one state that means a
+                            // human actually opened the thread.
                             val tint = if (message.status == MessageStatus.READ) {
                                 MaterialTheme.colorScheme.tertiary
                             } else {
                                 textColor
                             }
-                            Icon(icon, contentDescription = message.status.name, tint = tint, modifier = Modifier.size(14.dp))
+                            Text(label, color = tint, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

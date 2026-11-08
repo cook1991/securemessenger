@@ -45,7 +45,7 @@ object Notifications {
             .setOngoing(true)
             .build()
 
-    fun notifyIncoming(context: Context, mainActivityClass: Class<*>, peerDisplayName: String, body: String) {
+    fun notifyIncoming(context: Context, mainActivityClass: Class<*>, peerDisplayName: String) {
         val intent = Intent(context, mainActivityClass).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -67,9 +67,12 @@ object Notifications {
         val replyAction = NotificationCompat.Action.Builder(R.drawable.ic_reply, "Reply", replyPendingIntent)
             .addRemoteInput(remoteInput)
             .build()
+        // Deliberately never shows the plaintext — a lock-screen/shade peek shouldn't
+        // leak an E2EE message's content. The peer's name is fine (already known to
+        // this device; it's who, not what).
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(peerDisplayName)
-            .setContentText(body)
+            .setContentText("New message received")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)

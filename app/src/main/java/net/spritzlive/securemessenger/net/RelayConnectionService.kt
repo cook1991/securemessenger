@@ -25,9 +25,6 @@ import net.spritzlive.securemessenger.ui.Notifications
  * composed, so incoming-message notifications are suppressed exactly when the user
  * is already looking at the conversation.
  *
- * Deliberately deferred: inline-reply from the notification shade (needs RemoteInput
- * + a BroadcastReceiver threading the reply back through this same NetworkRepository)
- * and real DELIVERED-ack tracking — see NetworkRepository's own doc for the latter.
  */
 class RelayConnectionService : Service() {
     companion object {
@@ -52,9 +49,9 @@ class RelayConnectionService : Service() {
         super.onCreate()
         Notifications.ensureChannel(this)
         repository = NetworkRepository(applicationContext)
-        repository.onIncomingMessage = { body ->
+        repository.onIncomingMessage = {
             if (!isThreadVisible) {
-                Notifications.notifyIncoming(applicationContext, MainActivity::class.java, repository.displayName, body)
+                Notifications.notifyIncoming(applicationContext, MainActivity::class.java, repository.displayName)
             }
         }
     }
