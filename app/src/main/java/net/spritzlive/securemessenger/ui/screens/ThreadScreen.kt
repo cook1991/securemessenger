@@ -1,5 +1,11 @@
 package net.spritzlive.securemessenger.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +28,8 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,8 +53,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -54,6 +65,7 @@ import net.spritzlive.securemessenger.data.Message
 import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.net.RelayConnectionService
 import net.spritzlive.securemessenger.ui.SecureMessengerViewModel
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,6 +83,41 @@ fun ThreadScreen(
     var input by rememberSaveable { mutableStateOf("") }
     var shredTarget by remember { mutableStateOf<Long?>(null) }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
+
+    val pickImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) vm.sendImage(context, uri)
+    }
+
+    // The TakePicture contract needs a destination Uri up front (via FileProvider,
+    // since minSdk 26 has no direct file:// access) and reports back only success/
+    // failure, not the Uri — so the Uri this launch used has to be remembered here
+    // to know what to read afterward.
+    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (success && uri != null) {
+            // deleteSourceAfter: true — this is this app's own throwaway cache file,
+            // and vm.sendImage deletes it only once its async read has finished, not
+            // before.
+            vm.sendImage(context, uri, deleteSourceAfter = true)
+        } else {
+            uri?.let { runCatching { context.contentResolver.delete(it, null, null) } }
+        }
+    }
+
+    fun startCameraCapture() {
+        val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+        val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        pendingCameraUri = uri
+        takePictureLauncher.launch(uri)
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) startCameraCapture() }
 
     DisposableEffect(Unit) {
         vm.bind()
@@ -139,6 +186,22 @@ fun ThreadScreen(
                 Modifier.fillMaxWidth().padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                IconButton(onClick = {
+                    pickImageLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) {
+                    Icon(Icons.Filled.Image, contentDescription = "Send photo")
+                }
+                IconButton(onClick = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        startCameraCapture()
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                }) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = "Take photo")
+                }
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },

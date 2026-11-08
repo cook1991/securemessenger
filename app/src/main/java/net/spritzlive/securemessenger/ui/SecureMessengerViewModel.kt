@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -82,6 +83,27 @@ class SecureMessengerViewModel(application: Application) : AndroidViewModel(appl
 
     fun shred(id: Long) {
         viewModelScope.launch(Dispatchers.IO) { repo?.shred(id) }
+    }
+
+    /** Decode/resize/compress ([ImagePipeline], CPU-bound) then hand the result to
+     * NetworkRepository.sendImage (blocking disk/network work) — one coroutine
+     * covering both, each already on an appropriate dispatcher for its own work.
+     *
+     * [deleteSourceAfter]: camera capture writes to a throwaway cache file the
+     * caller doesn't otherwise clean up — true deletes it via the ContentResolver
+     * once this coroutine is done reading it, never before (deleting it from the
+     * caller right after launching this would race the read below). False for a
+     * picker Uri, which the system — not this app — owns and must not delete. */
+    fun sendImage(context: Context, uri: Uri, deleteSourceAfter: Boolean = false) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val jpegBytes = runCatching { ImagePipeline.loadResizedJpeg(context, uri) }.getOrNull()
+            if (jpegBytes != null) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { repo?.sendImage(jpegBytes) }
+            }
+            if (deleteSourceAfter) {
+                runCatching { context.contentResolver.delete(uri, null, null) }
+            }
+        }
     }
 
     fun markRead() {

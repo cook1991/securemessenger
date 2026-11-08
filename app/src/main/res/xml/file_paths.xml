@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Camera capture writes its full-res photo here; deleted right after the
+         resize/compress pipeline reads it (see ThreadScreen's capture launcher). -->
+    <cache-path name="camera_captures" path="camera/" />
+</paths>
