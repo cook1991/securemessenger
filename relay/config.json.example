@@ -8,6 +8,6 @@
   ],
   "queue": {
     "maxMessagesPerPeer": 200,
-    "maxBytesPerPeer": 5242880
+    "maxBytesPerPeer": 20971520
   }
 }

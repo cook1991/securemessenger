@@ -86,9 +86,10 @@ export type ServerToClient =
   | { type: 'bundle-not-found'; peerId: string }
   | { type: 'error'; message: string };
 
-// No attachments in the MVP (text-only), so this is a generous cap on the base64
-// ciphertext length, not a media size budget. Revisit if attachments are ever added.
-const MAX_CIPHERTEXT_B64 = 200_000;
+// Raised from the original text-only 200_000 to fit a compressed photo: the
+// Android app resizes/compresses to a worst case of ~600KB raw JPEG before
+// encrypting, and base64 inflates that by ~33%.
+const MAX_CIPHERTEXT_B64 = 900_000;
 const MAX_CANDIDATES = 8;
 // The packed PreKeyBundle is ~1.9KB raw (dominated by the Kyber-1024 key, per
 // QrPairing's own doc) — base64'd that's under 3KB. 20KB is generous headroom, not a

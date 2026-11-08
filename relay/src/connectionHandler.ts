@@ -9,7 +9,11 @@ import { parseClientMessage, type ClientToServer, type ServerToClient } from './
 import { verifyRegistration } from './auth.js';
 
 const NONCE_BYTES = 32;
-const MAX_FRAME_BYTES = 256 * 1024;
+// Checked on the raw JSON text, before protocol.ts's own MAX_CIPHERTEXT_B64 even
+// applies — must stay above that cap plus JSON envelope overhead, or every
+// oversized-but-otherwise-valid frame dies here first with a generic "frame too
+// large" instead of protocol.ts's more specific validation.
+const MAX_FRAME_BYTES = 1_000_000;
 
 export function handleConnection(
   ws: WebSocket,
