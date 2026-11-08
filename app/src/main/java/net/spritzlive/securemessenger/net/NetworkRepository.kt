@@ -64,8 +64,9 @@ class NetworkRepository(context: Context) {
     /** Fires after any local mutation (send, receive, shred) — callers should re-call [loadThread]. */
     var onMessagesChanged: (() -> Unit)? = null
 
-    /** Fires with the plaintext body specifically for a freshly-received message — for notifications. */
-    var onIncomingMessage: ((String) -> Unit)? = null
+    /** Fires on a freshly-received message, for the incoming-message notification —
+     * no plaintext passed through: the notification deliberately never shows it. */
+    var onIncomingMessage: (() -> Unit)? = null
 
     init {
         val scanned = QrPairing.decode(verifiedContact.scannedPayloadB64)
@@ -89,11 +90,10 @@ class NetworkRepository(context: Context) {
                     val kind = if (kindByte == MessageEnvelope.KIND_IMAGE) MessageKind.IMAGE else MessageKind.TEXT
                     repo.store(from, payload, System.currentTimeMillis(), outgoing = false,
                         status = MessageStatus.RECEIVED, kind = kind, receivedBlobId = blobId)
-                    val notifyText = if (kind == MessageKind.TEXT) String(payload, Charsets.UTF_8) else "Photo"
                     payload.wipe()
                     relayClient.sendDeliveryAck(from, blobId, "app")
                     onMessagesChanged?.invoke()
-                    onIncomingMessage?.invoke(notifyText)
+                    onIncomingMessage?.invoke()
                 }
                 .onFailure { e ->
                     onStateChange?.invoke("decrypt failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -122,8 +122,16 @@ class NetworkRepository(context: Context) {
             status = MessageStatus.SENDING, kind = messageKind)
         onMessagesChanged?.invoke()
         val wireBytes = sessionManager.encrypt(MessageEnvelope.wrap(kind, payloadBytes))
-        val blobId = relayClient.sendBlob(peerId, wireBytes)
+        // blobId is persisted BEFORE the blob goes out, not after: the peer can
+        // decrypt and ack faster than this round-trip, and a delivery-ack that
+        // arrives before updateSentBlobId had committed would find no matching row
+        // (findIdBySentBlobId returns null) and get silently dropped — confirmed live,
+        // where the tick only ever advanced once something *later* re-sent an ack
+        // (e.g. a "read" ack from reopening the thread), never from the original
+        // real-time delivery.
+        val blobId = java.util.UUID.randomUUID().toString()
         repo.updateSentBlobId(id, blobId)
+        relayClient.sendBlob(peerId, wireBytes, blobId)
         repo.updateStatus(id, MessageStatus.SENT)
         onMessagesChanged?.invoke()
     }

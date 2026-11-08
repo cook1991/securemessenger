@@ -113,10 +113,13 @@ class RelayClient(
         webSocket?.send(message.toString())
     }
 
-    /** Returns the blobId it generated, so the caller can correlate a later
-     * delivery-ack back to the local row this blob was sent for. */
-    fun sendBlob(to: String, ciphertext: ByteArray): String {
-        val blobId = java.util.UUID.randomUUID().toString()
+    /** [blobId] defaults to a fresh random one but can be supplied by the caller —
+     * NetworkRepository needs to persist the blobId->message mapping *before*
+     * transmitting, since a fast delivery-ack can otherwise arrive and find no
+     * matching row yet (see NetworkRepository.sendPayload). Returns the blobId
+     * either way, so the caller can correlate a later delivery-ack back to the
+     * local row this blob was sent for. */
+    fun sendBlob(to: String, ciphertext: ByteArray, blobId: String = java.util.UUID.randomUUID().toString()): String {
         val message = buildJsonObject {
             put("type", "relay-blob")
             put("to", to)
