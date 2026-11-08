@@ -1,10 +1,12 @@
 # Secure Messenger Relay
 
-A minimal, zero-knowledge rendezvous/relay for exactly two people (Jason + Eric). It never
-sees message content — everything it forwards or briefly queues is already end-to-end
-encrypted ciphertext — and it writes nothing to disk except its own config (the 2-person
-allowlist, port, and cert paths). No database, no Express, no socket.io: bare `node:tls` +
-the `ws` package, kept small enough to read end to end.
+A minimal, zero-knowledge rendezvous/relay, invite-gated so only people Jason explicitly
+approves can ever join. It never sees message content — everything it forwards or briefly
+queues is already end-to-end encrypted ciphertext. The only things it ever writes to disk are
+its own config (read-only after startup — the allowlist, port, and cert paths) and a small
+invite-redemption log (`state/invites.jsonl`, append-only — see "Inviting a new device" below).
+No database, no Express, no socket.io: bare `node:tls` + the `ws` package, kept small enough to
+read end to end.
 
 ## What it does (and doesn't)
 
@@ -16,8 +18,11 @@ the `ws` package, kept small enough to read end to end.
   and total bytes per peer, so delivery is eventually guaranteed — nothing is ever written to
   disk, and queued ciphertext is explicitly zeroed (`Buffer.fill(0)`) the moment it's delivered
   or evicted.
-- Enforces a **hardcoded 2-entry allowlist** — this is not an open-registration service. Any
-  connection that doesn't authenticate as one of the two configured peers is dropped immediately.
+- Enforces an **invite-gated allowlist** — this is not an open-registration service. A device
+  gets in one of two ways: a hand-curated entry in `config.json` (how Jason's and Eric's original
+  phones are configured), or by redeeming a single-use, admin-issued invite code over the wire
+  (see "Inviting a new device" below). Anything else is dropped immediately, with no distinction
+  shown between "wrong signature," "not allowlisted," and "bad/expired/used invite code."
 - Logs **lifecycle only** (start/stop/fatal) — never a connection's IP, a peer id, or any
   content. See `src/logging.ts`.
 
@@ -97,6 +102,32 @@ node dist/server.js ./config.json
    If port 8443 turns out to be blocked on Eric's carrier, switch `port` to `443` in
    `config.json` and uncomment the `CAP_NET_BIND_SERVICE` lines in the systemd unit (so the
    process still runs unprivileged rather than as root).
+
+## Inviting a new device
+
+A device's identity (`peerId`) is derived from a keypair generated fresh on first launch and
+never backed up — it changes on every reinstall. Rather than hand-editing `config.json` and
+restarting the service each time someone new joins or an existing person reinstalls, create a
+short-lived invite code instead; the new device redeems it live, no restart required:
+
+```bash
+sudo -u securemessenger node dist/admin-cli.js create-invite --config ./config.json --label "Sarah" --ttl-minutes 60
+```
+
+Run as `sudo -u securemessenger`, **not** as `jcook` directly — `/opt/securemessenger-relay` and
+its new `state/` subdirectory are owned by the `securemessenger` system user, and the CLI's
+writes need to match the live server's so neither ever hits a permission error. `--ttl-minutes`
+defaults to 60; the code is printed once and isn't stored in plaintext anywhere.
+
+Share the printed code with the person out of band (text, voice call). In the app, if voice-code
+pairing shows "this device isn't recognized yet," they enter the code there — the relay verifies
+it, grants that device's peerId permanent access (recorded in `state/invites.jsonl`, never in
+`config.json`), and pairing continues exactly as it always has. The code is single-use; redeeming
+it a second time fails the same opaque way an unrecognized device always has.
+
+This does **not** change how Jason's and Eric's original, already-allowlisted phones connect —
+their `config.json` entries are untouched by any of this, and a plain reinstall of either still
+needs a fresh invite redeemed, same as anyone else.
 
 ## Known simplification (documented, not hidden)
 

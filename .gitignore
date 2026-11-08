@@ -26,6 +26,7 @@ google-services.json
 
 # --- Relay server secrets/config (never commit) ---
 relay/config.json
+relay/state/
 relay/node_modules/
 relay/dist/
 relay/**/*.pem
