@@ -36,8 +36,8 @@ android {
         // model (per-message crypto-shredding, identity key wrapping) leans on it.
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 4
+        versionName = "0.4"
         vectorDrawables { useSupportLibrary = true }
         // arm64-v8a only: every real phone this app targets (minSdk 26 already rules
         // out anything old enough to plausibly be 32-bit-only) is arm64, and libsignal's
