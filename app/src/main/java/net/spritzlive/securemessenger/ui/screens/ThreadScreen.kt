@@ -2,11 +2,14 @@ package net.spritzlive.securemessenger.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,6 +55,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -62,6 +66,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.spritzlive.securemessenger.data.Message
+import net.spritzlive.securemessenger.data.MessageKind
 import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.net.RelayConnectionService
 import net.spritzlive.securemessenger.ui.SecureMessengerViewModel
@@ -254,6 +259,14 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
     val timeText = remember(message.date) {
         SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.date))
     }
+    // Decoded once per message id, not on every recomposition — imageBytes never
+    // changes for a given row once stored.
+    val bitmap = remember(message.id) {
+        message.imageBytes?.let { bytes ->
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+    var showFullscreen by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Surface(
@@ -262,14 +275,27 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
             modifier = Modifier
                 .widthIn(max = 280.dp)
                 .height(IntrinsicSize.Min)
-                .combinedClickable(onClick = {}, onLongClick = onLongPress),
+                .combinedClickable(
+                    onClick = { if (bitmap != null) showFullscreen = true },
+                    onLongClick = onLongPress,
+                ),
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(
-                    if (message.shredded) "Message deleted" else message.body,
-                    color = textColor,
-                    textAlign = TextAlign.Start,
-                )
+                when {
+                    message.shredded -> Text("Message deleted", color = textColor, textAlign = TextAlign.Start)
+                    message.status == MessageStatus.FAILED && message.kind == MessageKind.IMAGE ->
+                        Text("Photo too large to send", color = textColor, textAlign = TextAlign.Start)
+                    message.kind == MessageKind.IMAGE -> if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = "Photo",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Text("Couldn't load photo", color = textColor, textAlign = TextAlign.Start)
+                    }
+                    else -> Text(message.body, color = textColor, textAlign = TextAlign.Start)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         timeText,
@@ -296,6 +322,17 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+
+    if (showFullscreen && bitmap != null) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showFullscreen = false }) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Photo",
+                modifier = Modifier.fillMaxSize().clickable { showFullscreen = false },
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            )
         }
     }
 }
