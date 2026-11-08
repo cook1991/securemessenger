@@ -83,7 +83,19 @@ node dist/server.js ./config.json
    the hex SHA-256 of that phone's raw 32-byte Ed25519 relay-auth public key, generated during
    that phone's pairing setup (see the Android app's `RelayAuthKeyStore.kt`).
 
-5. **Install the systemd unit:**
+5. **Create the invite-state directory before installing the unit** — `ReadWritePaths` in the
+   systemd unit requires the directory to already exist; the service fails to start at all
+   (`status=226/NAMESPACE`, "Failed to set up mount namespacing") if it doesn't, since `invites.ts`'s
+   own `mkdirSync` only runs once something actually tries to write, which is too late for
+   systemd's own namespace setup:
+
+   ```bash
+   sudo mkdir -p /opt/securemessenger-relay/state
+   sudo chown securemessenger:securemessenger /opt/securemessenger-relay/state
+   sudo chmod 700 /opt/securemessenger-relay/state
+   ```
+
+6. **Install the systemd unit:**
 
    ```bash
    sudo cp systemd/securemessenger-relay.service /etc/systemd/system/
@@ -91,7 +103,7 @@ node dist/server.js ./config.json
    sudo systemctl enable --now securemessenger-relay
    ```
 
-6. **Verify nothing is logged beyond lifecycle lines:**
+7. **Verify nothing is logged beyond lifecycle lines:**
 
    ```bash
    journalctl -u securemessenger-relay -f
