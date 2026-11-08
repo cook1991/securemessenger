@@ -90,6 +90,11 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
     var voiceNotFound by remember(voicePairing) { mutableStateOf(false) }
     var voicePeer by remember(voicePairing) { mutableStateOf<QrPairing.ScannedPeer?>(null) }
     var voiceFingerprintText by remember(voicePairing) { mutableStateOf<String?>(null) }
+    // Set when the relay explicitly rejects this device (new/reinstalled, not yet
+    // allowlisted) — see RelayClient.onAuthRejected. Distinct from voiceStatus's
+    // transient text: this drives a terminal UI state, not just a status label.
+    var authRejected by remember(voicePairing) { mutableStateOf(false) }
+    var inviteCodeInput by rememberSaveable { mutableStateOf("") }
 
     DisposableEffect(voicePairing) {
         val vp = voicePairing
@@ -103,6 +108,7 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
             context.stopService(Intent(context, RelayConnectionService::class.java))
             vp.onStateChange = { voiceStatus = it }
             vp.onRegistered = { voiceRegistered = true }
+            vp.onAuthRejected = { authRejected = true }
             vp.onPeerFound = { peer ->
                 voiceNotFound = false
                 voicePeer = peer
@@ -292,6 +298,32 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
             TextButton(onClick = { pairingMode = "choose" }) { Text("← Back") }
             Text("Status: $voiceStatus")
 
+            if (authRejected) {
+                // A brand-new or reinstalled device isn't allowlisted yet -- the relay
+                // rejected plain registration. An admin-issued invite code, redeemed
+                // here, is the self-service path in instead of an SSH+restart on the
+                // relay. See relay/README.md's "Inviting a new device".
+                Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("This device isn't recognized yet.")
+                        Text("Ask whoever runs the relay for an invite code, then enter it below.")
+                        OutlinedTextField(
+                            value = inviteCodeInput,
+                            onValueChange = { inviteCodeInput = it },
+                            label = { Text("Invite code") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            enabled = inviteCodeInput.isNotBlank(),
+                            onClick = {
+                                authRejected = false
+                                voicePairing.connect(inviteCodeInput)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Retry with invite code") }
+                    }
+                }
+            } else {
             Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Your code (read or text this to them):")
@@ -363,6 +395,7 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
                         ) { Text("It matches — confirm & save") }
                     }
                 }
+            }
             }
         }
     }
