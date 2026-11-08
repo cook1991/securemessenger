@@ -14,7 +14,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# No ReadWritePaths — this process has no reason to write anything, anywhere.
+# Scoped exception: invite-redemption state (invites.ts) is the one thing this
+# process ever writes. config.json itself stays outside this path and therefore
+# stays OS-enforced read-only, exactly as before.
+ReadWritePaths=/opt/securemessenger-relay/state
 StandardOutput=journal
 StandardError=journal
 # journald should only ever show lifecycle lines (start/stop/fatal) — never content.
