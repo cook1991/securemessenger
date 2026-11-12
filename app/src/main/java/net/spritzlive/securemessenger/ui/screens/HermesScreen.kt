@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -70,6 +71,8 @@ fun HermesScreen(
     DisposableEffect(lifecycleOwner) {
         fun setVisible(visible: Boolean) {
             HermesConnectionService.isScreenVisible = visible
+            // On both edges: everything that arrived while it was open counts as seen.
+            HermesConnectionService.markSeen(context)
             if (visible) HermesConnectionService.dismissIncoming(context)
         }
         val observer = LifecycleEventObserver { _, event ->
@@ -84,6 +87,7 @@ fun HermesScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             HermesConnectionService.isScreenVisible = false
+            HermesConnectionService.markSeen(context)
         }
     }
 
@@ -102,6 +106,11 @@ fun HermesScreen(
                     Column {
                         Text("Hermes")
                         Text(status, style = MaterialTheme.typography.labelSmall)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "All chats")
                     }
                 },
             )

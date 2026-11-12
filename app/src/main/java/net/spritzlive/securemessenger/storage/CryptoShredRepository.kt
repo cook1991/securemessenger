@@ -60,6 +60,10 @@ class CryptoShredRepository(context: Context) {
         db.markReadAckSent(id)
     }
 
+    fun lastMessageDate(peerId: String): Long? = db.lastMessageDate(peerId)
+
+    fun reassignPeer(oldPeerId: String, newPeerId: String) = db.reassignPeer(oldPeerId, newPeerId)
+
     private val statusRank = mapOf(
         MessageStatus.SENDING to 0,
         MessageStatus.SENT to 1,

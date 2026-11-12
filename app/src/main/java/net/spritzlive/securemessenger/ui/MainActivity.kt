@@ -8,6 +8,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import net.spritzlive.securemessenger.net.hermes.HermesConnectionService
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -18,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.spritzlive.securemessenger.crypto.LibsignalSpike
 import net.spritzlive.securemessenger.pairing.ContactVerificationStore
+import net.spritzlive.securemessenger.crypto.HermesAuthStore
+import net.spritzlive.securemessenger.ui.screens.ChatListScreen
 import net.spritzlive.securemessenger.ui.screens.HermesPairingScreen
 import net.spritzlive.securemessenger.ui.screens.HermesScreen
 import net.spritzlive.securemessenger.ui.screens.PairingScreen
@@ -28,38 +32,54 @@ import net.spritzlive.securemessenger.ui.theme.SecureMessengerTheme
 
 private const val TAG = "LibsignalSpike"
 
-private const val ROUTE_PAIRING = "pairing"
-private const val ROUTE_THREAD = "thread"
+private const val ROUTE_CHATS = "chats"
+private const val ROUTE_THREAD = "thread/{peerId}"
+private const val ROUTE_CONTACT = "contact/{peerId}"
+private const val ROUTE_ADD_CONTACT = "add_contact"
 private const val ROUTE_TEXTSIZE = "textsize"
 private const val ROUTE_HERMES = "hermes"
 private const val ROUTE_HERMES_PAIRING = "hermes_pairing"
 
+private fun threadRoute(peerId: String) = "thread/$peerId"
+private fun contactRoute(peerId: String) = "contact/$peerId"
+
+/** Where a notification tap asked to go. */
+private sealed interface OpenRequest {
+    data class Contact(val peerId: String) : OpenRequest
+    data object Hermes : OpenRequest
+}
+
 /**
- * Phase 6: real NavHost. Start destination depends on whether a verified contact
- * already exists (ContactVerificationStore) — unpaired starts at PairingScreen,
- * already-paired goes straight to the thread. PairingScreen stays reachable from
- * the thread's top bar afterward too (contact info / re-pair / safety number).
+ * The chat list is always the bottom of the back stack. On launch the app goes one
+ * step further on its own when there's an obvious place to be: nothing paired yet →
+ * add a contact; exactly one conversation → straight into it (back still reaches
+ * the list). A notification tap opens that conversation on top of the list.
  */
 class MainActivity : ComponentActivity() {
-    // Set by a tap on the Hermes new-message notification, on cold start (onCreate)
-    // or with the Activity already running (onNewIntent, launchMode=singleTop).
-    private val openHermesRequested = mutableStateOf(false)
+    // Set by a notification tap, on cold start (onCreate) or with the Activity
+    // already running (onNewIntent, launchMode=singleTop).
+    private val openRequest = mutableStateOf<OpenRequest?>(null)
 
-    private fun consumeOpenHermes(intent: Intent?) {
-        if (intent?.getBooleanExtra(HermesConnectionService.EXTRA_OPEN_HERMES, false) == true) {
+    private fun consumeOpenRequest(intent: Intent?) {
+        if (intent == null) return
+        if (intent.getBooleanExtra(HermesConnectionService.EXTRA_OPEN_HERMES, false)) {
             intent.removeExtra(HermesConnectionService.EXTRA_OPEN_HERMES)
-            openHermesRequested.value = true
+            openRequest.value = OpenRequest.Hermes
+        }
+        intent.getStringExtra(EXTRA_PEER_ID)?.let { peerId ->
+            intent.removeExtra(EXTRA_PEER_ID)
+            openRequest.value = OpenRequest.Contact(peerId)
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        consumeOpenHermes(intent)
+        consumeOpenRequest(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        consumeOpenHermes(intent)
+        consumeOpenRequest(intent)
         setContent {
             val fontScale by TextSizePreference.flow(applicationContext).collectAsState(initial = SENIOR_FONT_SCALE)
 
@@ -76,22 +96,43 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val navController = rememberNavController()
-                val startDestination = if (ContactVerificationStore(applicationContext).load() != null) {
-                    ROUTE_THREAD
-                } else {
-                    ROUTE_PAIRING
+
+                // After a new pairing or re-pair: that conversation, on top of the list
+                // (a re-pair can change the peerId, so the old thread entry goes too).
+                fun openThreadFromList(peerId: String) {
+                    navController.navigate(threadRoute(peerId)) { popUpTo(ROUTE_CHATS) }
                 }
 
-                NavHost(navController = navController, startDestination = startDestination) {
-                    composable(ROUTE_PAIRING) {
-                        val canGoBack = navController.previousBackStackEntry != null
-                        PairingScreen(onBack = if (canGoBack) ({ navController.popBackStack() }) else null)
+                NavHost(navController = navController, startDestination = ROUTE_CHATS) {
+                    composable(ROUTE_CHATS) {
+                        ChatListScreen(
+                            vm = viewModel(),
+                            onOpenContact = { navController.navigate(threadRoute(it)) },
+                            onOpenHermes = { navController.navigate(ROUTE_HERMES) },
+                            onAddContact = { navController.navigate(ROUTE_ADD_CONTACT) },
+                            onSetUpHermes = { navController.navigate(ROUTE_HERMES) },
+                            onTextSize = { navController.navigate(ROUTE_TEXTSIZE) },
+                        )
                     }
-                    composable(ROUTE_THREAD) {
+                    composable(ROUTE_ADD_CONTACT) {
+                        PairingScreen(
+                            onBack = { navController.popBackStack() },
+                            onPaired = { openThreadFromList(it) },
+                        )
+                    }
+                    composable(ROUTE_CONTACT) { entry ->
+                        PairingScreen(
+                            existingPeerId = entry.arguments?.getString("peerId"),
+                            onBack = { navController.popBackStack() },
+                            onPaired = { openThreadFromList(it) },
+                        )
+                    }
+                    composable(ROUTE_THREAD) { entry ->
+                        val peerId = entry.arguments?.getString("peerId").orEmpty()
                         ThreadScreen(
-                            onNavigateToPairing = { navController.navigate(ROUTE_PAIRING) },
+                            onBack = { navController.popBackStack() },
+                            onNavigateToPairing = { navController.navigate(contactRoute(peerId)) },
                             onNavigateToTextSize = { navController.navigate(ROUTE_TEXTSIZE) },
-                            onNavigateToHermes = { navController.navigate(ROUTE_HERMES) },
                         )
                     }
                     composable(ROUTE_TEXTSIZE) {
@@ -116,12 +157,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val openHermes by openHermesRequested
-                androidx.compose.runtime.LaunchedEffect(openHermes) {
-                    if (openHermes) {
-                        navController.navigate(ROUTE_HERMES) { launchSingleTop = true }
-                        openHermesRequested.value = false
+                // Once per launch (not on rotation/recreation, which restores the back
+                // stack itself), unless a notification tap already says where to go.
+                var autoOpened by rememberSaveable { mutableStateOf(false) }
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (autoOpened) return@LaunchedEffect
+                    autoOpened = true
+                    if (openRequest.value != null) return@LaunchedEffect
+                    val contacts = ContactVerificationStore(applicationContext).loadAll()
+                    val hermesPaired = HermesAuthStore(applicationContext).isPaired()
+                    when {
+                        contacts.isEmpty() && !hermesPaired -> navController.navigate(ROUTE_ADD_CONTACT)
+                        contacts.size == 1 && !hermesPaired -> navController.navigate(threadRoute(contacts[0].peerId))
+                        contacts.isEmpty() && hermesPaired -> navController.navigate(ROUTE_HERMES)
                     }
+                }
+
+                val request by openRequest
+                androidx.compose.runtime.LaunchedEffect(request) {
+                    val r = request ?: return@LaunchedEffect
+                    when (r) {
+                        is OpenRequest.Contact -> navController.navigate(threadRoute(r.peerId)) { popUpTo(ROUTE_CHATS) }
+                        OpenRequest.Hermes -> navController.navigate(ROUTE_HERMES) { popUpTo(ROUTE_CHATS) }
+                    }
+                    openRequest.value = null
                 }
             }
         }

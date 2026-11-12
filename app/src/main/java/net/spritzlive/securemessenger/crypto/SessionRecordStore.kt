@@ -13,21 +13,41 @@ import javax.crypto.spec.GCMParameterSpec
 private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 private const val WRAP_KEY_ALIAS = "securemessenger_session_wrap"
 private const val GCM_TAG_BITS = 128
+private const val LEGACY_FILE = "signal_session.bin"
+private val PEER_ID = Regex("^[0-9a-f]{64}$")
 
 /**
- * Persists the Double Ratchet's `SessionRecord` bytes for the one MVP peer, so the
- * ratchet chain continues across app restarts instead of re-running a full PQXDH
- * handshake every launch. Re-handshaking every launch would also be a real weakness,
- * not just wasteful: the fixed one-time prekey (SignalIdentityStore.FIXED_PREKEY_ID)
- * is meant to be consumed once, and X3DH/PQXDH's one-time-prekey security property
- * depends on that — reusing it across repeated handshakes would quietly erode it.
+ * Persists one contact's Double Ratchet `SessionRecord` bytes, so the ratchet chain
+ * continues across app restarts instead of re-running a full PQXDH handshake every
+ * launch (which would also burn a fresh one-time prekey each time).
  *
- * Single-slot, same reasoning as ContactVerificationStore: this app only ever has
- * one peer. AndroidKeystore-wrapped like the other local crypto material here, since
- * ratchet chain keys are exactly the kind of thing this scheme exists to protect.
+ * One file per contact, named by peerId. Before multiple contacts this was a single
+ * `signal_session.bin`; [migrateLegacy] renames that to the original contact's file.
+ * AndroidKeystore-wrapped like the other local crypto material here.
  */
-class SessionRecordStore(context: Context) {
-    private val file = File(context.filesDir, "signal_session.bin")
+class SessionRecordStore(context: Context, peerId: String) {
+    init {
+        // peerId becomes part of a file name: only ever a hex SHA-256.
+        require(PEER_ID.matches(peerId)) { "invalid peerId" }
+    }
+
+    private val file = File(context.filesDir, "signal_session_$peerId.bin")
+
+    companion object {
+        /** Gives the pre-multi-contact session file to the contact it belonged to.
+         * Idempotent; safe to call on every launch. */
+        fun migrateLegacy(context: Context, peerId: String) {
+            require(PEER_ID.matches(peerId)) { "invalid peerId" }
+            val legacy = File(context.filesDir, LEGACY_FILE)
+            if (!legacy.exists()) return
+            val target = File(context.filesDir, "signal_session_$peerId.bin")
+            if (target.exists()) {
+                legacy.delete()
+            } else if (!legacy.renameTo(target)) {
+                error("couldn't migrate session file")
+            }
+        }
+    }
 
     fun load(): ByteArray? {
         if (!file.exists()) return null
@@ -46,7 +66,13 @@ class SessionRecordStore(context: Context) {
         cipher.init(Cipher.ENCRYPT_MODE, getOrCreateWrapKey())
         val iv = cipher.iv
         val wrapped = cipher.doFinal(sessionRecordBytes)
-        file.writeBytes(packBlocks(iv, wrapped))
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeBytes(packBlocks(iv, wrapped))
+        if (!tmp.renameTo(file)) error("couldn't save session")
+    }
+
+    fun delete() {
+        file.delete()
     }
 
     private fun getOrCreateWrapKey(): SecretKey {
@@ -68,14 +94,14 @@ class SessionRecordStore(context: Context) {
     }
 
     private fun packBlocks(vararg blocks: ByteArray): ByteArray {
-        val out = ArrayList<Byte>()
+        val out = java.io.ByteArrayOutputStream()
         for (block in blocks) {
             val len = block.size
-            out.add((len ushr 24).toByte())
-            out.add((len ushr 16).toByte())
-            out.add((len ushr 8).toByte())
-            out.add(len.toByte())
-            block.forEach { out.add(it) }
+            out.write(len ushr 24)
+            out.write(len ushr 16)
+            out.write(len ushr 8)
+            out.write(len)
+            out.write(block)
         }
         return out.toByteArray()
     }

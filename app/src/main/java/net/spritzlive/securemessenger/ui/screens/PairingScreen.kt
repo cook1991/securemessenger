@@ -46,15 +46,19 @@ import net.spritzlive.securemessenger.pairing.VoiceCodePairing
 import android.util.Base64
 
 /**
- * Phase 4: real verified pairing, replacing Phase 3's hardcoded trust
- * (TempCryptoRelayTest's manually-copied bundle constants, now deleted).
+ * Verified pairing by QR (in person) or voice code (remote).
  *
+ * [existingPeerId] set: contact info for that contact (safety number, re-pair),
+ * reached from their conversation. Null: adding a new contact.
  * [onBack] is null when this is the app's start destination (nothing paired yet,
- * nowhere to go back to) and non-null when reached from ThreadScreen's top bar
- * (contact info / re-pair / safety number, with a way back to the conversation).
+ * nowhere to go back to). [onPaired] gets the saved contact's peerId.
  */
 @Composable
-fun PairingScreen(onBack: (() -> Unit)? = null) {
+fun PairingScreen(
+    existingPeerId: String? = null,
+    onBack: (() -> Unit)? = null,
+    onPaired: (peerId: String) -> Unit = {},
+) {
     val context = LocalContext.current
     val contactStore = remember { ContactVerificationStore(context) }
     val profileStore = remember { LocalProfileStore(context) }
@@ -63,7 +67,27 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
 
     var myDisplayName by rememberSaveable { mutableStateOf(profileStore.loadDisplayName() ?: "") }
     var nameInput by rememberSaveable { mutableStateOf(myDisplayName) }
-    var verifiedContact by remember { mutableStateOf(contactStore.load()) }
+    var verifiedContact by remember { mutableStateOf(existingPeerId?.let { contactStore.get(it) }) }
+    // Set by "Re-pair": the contact the next save replaces (their peerId changes if
+    // they re-paired from a reinstalled phone).
+    var replacingPeerId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun saveContact(contact: VerifiedContact) {
+        replaceContact(context, contactStore, contact, replacingPeerId)
+        onPaired(contact.peerId)
+    }
+
+    // The relay service registers under this device's peerId too, and the relay
+    // keeps only the most recent registration live — a voice-pairing connection
+    // would silently steal incoming messages instead of the relay queuing them (see
+    // VoiceCodePairing's class doc). Stopped for the whole screen, not just voice
+    // mode, so contact changes here never race the service's own use of them. Any
+    // message that arrives meanwhile waits in the relay's queue; the service is
+    // started again by whichever screen comes next.
+    DisposableEffect(Unit) {
+        context.stopService(Intent(context, RelayConnectionService::class.java))
+        onDispose {}
+    }
 
     var scannedPeer by remember { mutableStateOf<QrPairing.ScannedPeer?>(null) }
     var scannedPayload by remember { mutableStateOf<String?>(null) }
@@ -99,13 +123,6 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
     DisposableEffect(voicePairing) {
         val vp = voicePairing
         if (vp != null) {
-            // The main app connection (RelayConnectionService) registers under this
-            // device's peerId too, and the relay keeps only the most recent
-            // registration live — without stopping it first, this second connection
-            // would silently steal incoming messages instead of the relay queuing
-            // them (see VoiceCodePairing's class doc). No-op if that service isn't
-            // running, which covers the primary first-time-pairing path.
-            context.stopService(Intent(context, RelayConnectionService::class.java))
             vp.onStateChange = { voiceStatus = it }
             vp.onRegistered = { voiceRegistered = true }
             vp.onAuthRejected = { authRejected = true }
@@ -224,7 +241,10 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
                     )
                 }
             }
-            TextButton(onClick = { verifiedContact = null }) { Text("Re-pair (overwrite)") }
+            TextButton(onClick = {
+                replacingPeerId = contact.peerId
+                verifiedContact = null
+            }) { Text("Re-pair (overwrite)") }
             return@Column
         }
 
@@ -242,7 +262,8 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
             TextButton(onClick = { pairingMode = "choose" }) { Text("← Back") }
             Text("Your code — have ${if (myDisplayName.isNotBlank()) "them" else "the other person"} scan this")
             val myQrBitmap = remember(myDisplayName) {
-                QrPairing.generateQrBitmap(relayAuth.publicKeyRaw, myDisplayName, signalStore.ownBundle())
+                // A fresh one-time prekey per QR shown — see SignalIdentityStore.
+                QrPairing.generateQrBitmap(relayAuth.publicKeyRaw, myDisplayName, signalStore.newPairingBundle())
             }
             // Displayed as large as the screen allows, at nearest-neighbor quality: a
             // ~150-module-dense QR (this payload's size, dominated by the Kyber-1024 key)
@@ -283,9 +304,8 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
                                     verifiedAt = System.currentTimeMillis(),
                                     verificationMethod = VerificationMethod.QR,
                                 )
-                                contactStore.save(saved)
-                                verifiedContact = saved
                                 scannedPeer = null
+                                saveContact(saved)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Confirm & save") }
@@ -387,9 +407,8 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
                                     verifiedAt = System.currentTimeMillis(),
                                     verificationMethod = VerificationMethod.VOICE,
                                 )
-                                contactStore.save(saved)
-                                verifiedContact = saved
                                 voicePeer = null
+                                saveContact(saved)
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("It matches — confirm & save") }
@@ -400,7 +419,31 @@ fun PairingScreen(onBack: (() -> Unit)? = null) {
         }
     }
     if (onBack != null) {
-        net.spritzlive.securemessenger.ui.BackToMessagesBar(onBack = onBack, label = "BACK TO CONVERSATION")
+        net.spritzlive.securemessenger.ui.BackToMessagesBar(
+            onBack = onBack,
+            label = if (existingPeerId != null) "BACK TO CONVERSATION" else "BACK TO CHATS",
+        )
     }
+    }
+}
+
+/**
+ * Saves a newly verified contact. When it replaces [replacingPeerId] under a
+ * different peerId (they re-paired from a reinstalled phone), the conversation's
+ * history moves to the new peerId and the old contact and its session go away.
+ * Runs while the relay service is stopped (see PairingScreen), so nothing else is
+ * using these stores.
+ */
+private fun replaceContact(
+    context: android.content.Context,
+    contactStore: ContactVerificationStore,
+    contact: VerifiedContact,
+    replacingPeerId: String?,
+) {
+    contactStore.save(contact)
+    if (replacingPeerId != null && replacingPeerId != contact.peerId) {
+        net.spritzlive.securemessenger.storage.CryptoShredRepository(context).reassignPeer(replacingPeerId, contact.peerId)
+        contactStore.remove(replacingPeerId)
+        net.spritzlive.securemessenger.crypto.SessionRecordStore(context, replacingPeerId).delete()
     }
 }

@@ -3,6 +3,7 @@ package net.spritzlive.securemessenger.pairing
 import android.content.Context
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import net.spritzlive.securemessenger.crypto.SessionRecordStore
 import java.io.File
 
 enum class VerificationMethod { QR, VOICE }
@@ -13,12 +14,9 @@ enum class VerificationMethod { QR, VOICE }
  * plain JSON on local storage (already sandboxed by Android's per-app storage) is
  * appropriate; no AndroidKeystore wrapping needed.
  *
- * [scannedPayloadB64] caches the peer's exact QrPairing-encoded QR payload from
+ * [scannedPayloadB64] caches the peer's exact QrPairing-encoded payload from
  * pairing time (re-decodable via QrPairing.decode) so the first message can be
- * encrypted without a fresh fetch. This app's prekey set doesn't rotate yet
- * (SignalIdentityStore is a fixed single set, not a real pool — Phase 5+ territory),
- * so there's no "refresh the bundle" path to fall back on yet; once that exists,
- * revisit whether caching it this long still makes sense.
+ * encrypted without a fresh fetch.
  */
 @Serializable
 data class VerifiedContact(
@@ -30,24 +28,57 @@ data class VerifiedContact(
     val verificationMethod: VerificationMethod,
 )
 
+/** Every store instance in the process shares one file; writes are read-modify-write. */
+private val contactsLock = Any()
+
 /**
- * This app is 1:1 only (Jason + Eric, per the plan) — so this is deliberately a
- * single-slot store, not a contact list.
+ * The verified contacts, keyed by peerId. Before multiple contacts this was a
+ * single-slot `verified_contact.json`; the first access migrates it (and its
+ * session file) into the list, so the existing conversation carries over with no
+ * re-pairing.
  */
 class ContactVerificationStore(context: Context) {
-    private val file = File(context.filesDir, "verified_contact.json")
+    private val appContext = context.applicationContext
+    private val file = File(appContext.filesDir, "contacts.json")
+    private val legacyFile = File(appContext.filesDir, "verified_contact.json")
 
-    fun load(): VerifiedContact? {
-        if (!file.exists()) return null
-        return Json.decodeFromString<VerifiedContact>(file.readText())
+    init {
+        migrateLegacy()
     }
 
-    fun save(contact: VerifiedContact) {
-        file.writeText(Json.encodeToString(contact))
+    fun loadAll(): List<VerifiedContact> = synchronized(contactsLock) { read() }
+
+    fun get(peerId: String): VerifiedContact? = loadAll().firstOrNull { it.peerId == peerId }
+
+    /** Adds [contact], or replaces the existing entry with the same peerId. */
+    fun save(contact: VerifiedContact) = synchronized(contactsLock) {
+        write(read().filterNot { it.peerId == contact.peerId } + contact)
     }
 
-    fun clear() {
-        file.delete()
+    fun remove(peerId: String) = synchronized(contactsLock) {
+        write(read().filterNot { it.peerId == peerId })
+    }
+
+    private fun read(): List<VerifiedContact> {
+        if (!file.exists()) return emptyList()
+        return Json.decodeFromString<List<VerifiedContact>>(file.readText())
+    }
+
+    private fun write(contacts: List<VerifiedContact>) {
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeText(Json.encodeToString(contacts))
+        if (!tmp.renameTo(file)) error("couldn't save contacts")
+    }
+
+    // Each step is safe to repeat, so an interruption part-way is finished next launch.
+    private fun migrateLegacy() {
+        synchronized(contactsLock) {
+            if (!legacyFile.exists()) return
+            val legacy = Json.decodeFromString<VerifiedContact>(legacyFile.readText())
+            SessionRecordStore.migrateLegacy(appContext, legacy.peerId)
+            if (read().none { it.peerId == legacy.peerId }) write(read() + legacy)
+            legacyFile.delete()
+        }
     }
 }
 

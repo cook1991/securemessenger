@@ -13,23 +13,18 @@ import net.spritzlive.securemessenger.ui.Notifications
 
 /**
  * Keeps the relay socket alive and messages flowing while the app isn't in the
- * foreground — without this, NetworkRepository's connection only existed as long as
- * ThreadScreen was composed (foreground-only, per Phase 6's first pass). Owns the
- * single NetworkRepository instance for the app's lifetime; ThreadScreen/ViewModel
- * bind to this service rather than constructing their own, so there's never two
- * live connections registering as the same relay peer at once (that was a real bug
- * fixed earlier this phase with the old TempRelayClientSpike).
+ * foreground. Owns the single NetworkRepository instance (one connection for every
+ * contact); screens bind to this service rather than constructing their own, so
+ * there's never two live connections registering as the same relay peer at once.
  *
- * [RelayConnectionService.isThreadVisible] is a simple in-process flag (service and
- * activity share the same process — no IPC needed) that ThreadScreen sets while
- * composed, so incoming-message notifications are suppressed exactly when the user
- * is already looking at the conversation.
- *
+ * [visiblePeerId] is a simple in-process flag (service and activity share the same
+ * process — no IPC needed) that ThreadScreen sets while that contact's conversation
+ * is actually on screen, so their notifications are suppressed exactly then.
  */
 class RelayConnectionService : Service() {
     companion object {
         @Volatile
-        var isThreadVisible: Boolean = false
+        var visiblePeerId: String? = null
     }
 
     private val binder = LocalBinder()
@@ -49,9 +44,9 @@ class RelayConnectionService : Service() {
         super.onCreate()
         Notifications.ensureChannel(this)
         repository = NetworkRepository(applicationContext)
-        repository.onIncomingMessage = {
-            if (!isThreadVisible) {
-                Notifications.notifyIncoming(applicationContext, MainActivity::class.java, repository.displayName)
+        repository.onIncomingMessage = { peerId, name ->
+            if (visiblePeerId != peerId) {
+                Notifications.notifyIncoming(applicationContext, MainActivity::class.java, peerId, name)
             }
         }
     }
@@ -59,7 +54,8 @@ class RelayConnectionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!started) {
             started = true
-            startForeground(Notifications.FOREGROUND_ID, Notifications.foregroundNotification(this, repository.displayName))
+            val names = repository.contacts().map { it.displayName }
+            startForeground(Notifications.FOREGROUND_ID, Notifications.foregroundNotification(this, names))
             scope.launch { repository.connect() }
         }
         return START_STICKY

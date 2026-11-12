@@ -84,7 +84,7 @@ class VoiceCodePairing(context: Context) {
     fun close() = relayClient.close()
 
     fun publishMyBundle(displayName: String) {
-        relayClient.publishBundle(QrPairing.encode(relayAuth.publicKeyRaw, displayName, signalStore.ownBundle()))
+        relayClient.publishBundle(QrPairing.encode(relayAuth.publicKeyRaw, displayName, signalStore.newPairingBundle()))
     }
 
     fun fetchPeerBundle(peerId: String) = relayClient.fetchBundle(peerId)

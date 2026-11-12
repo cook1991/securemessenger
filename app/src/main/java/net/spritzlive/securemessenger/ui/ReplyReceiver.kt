@@ -14,14 +14,14 @@ import net.spritzlive.securemessenger.net.RelayConnectionService
 
 /**
  * Handles a reply typed directly into the notification shade, without opening the
- * app. RelayConnectionService is already alive in the background for the app's
- * entire lifetime (its own doc comment) — this binds to it just long enough to call
- * sendMessage, rather than constructing a second NetworkRepository, which the
- * service explicitly guards against (never two live connections registering as the
- * same relay peer at once).
+ * app. RelayConnectionService is already alive in the background — this binds to it
+ * just long enough to call sendMessage, rather than constructing a second
+ * NetworkRepository, which the service explicitly guards against (never two live
+ * connections registering as the same relay peer at once).
  */
 class ReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val peerId = intent.getStringExtra(EXTRA_PEER_ID) ?: return
         val replyText = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(KEY_TEXT_REPLY)?.toString()?.trim().orEmpty()
         if (replyText.isEmpty()) return
@@ -36,8 +36,8 @@ class ReplyReceiver : BroadcastReceiver() {
             override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                 val service = (binder as RelayConnectionService.LocalBinder).getService()
                 CoroutineScope(Dispatchers.IO).launch {
-                    runCatching { service.repository.sendMessage(replyText) }
-                    Notifications.dismissIncoming(appContext)
+                    runCatching { service.repository.sendMessage(peerId, replyText) }
+                    Notifications.dismissIncoming(appContext, peerId)
                     appContext.unbindService(connection)
                     pendingResult.finish()
                 }

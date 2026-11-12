@@ -27,11 +27,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -68,7 +68,8 @@ import net.spritzlive.securemessenger.data.Message
 import net.spritzlive.securemessenger.data.MessageKind
 import net.spritzlive.securemessenger.data.MessageStatus
 import net.spritzlive.securemessenger.net.RelayConnectionService
-import net.spritzlive.securemessenger.ui.SecureMessengerViewModel
+import net.spritzlive.securemessenger.ui.Notifications
+import net.spritzlive.securemessenger.ui.ThreadViewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,10 +78,10 @@ import java.util.Locale
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadScreen(
+    onBack: () -> Unit,
     onNavigateToPairing: () -> Unit,
     onNavigateToTextSize: () -> Unit,
-    onNavigateToHermes: () -> Unit,
-    vm: SecureMessengerViewModel = viewModel(),
+    vm: ThreadViewModel = viewModel(),
 ) {
     val messages by vm.messages.collectAsState()
     val status by vm.status.collectAsState()
@@ -124,26 +125,37 @@ fun ThreadScreen(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) startCameraCapture() }
 
+    // Only clears the flag if it's still ours: during a navigation transition the
+    // next conversation can claim it before this one's dispose runs.
+    fun setVisible(visible: Boolean) {
+        if (visible) {
+            RelayConnectionService.visiblePeerId = vm.peerId
+            Notifications.dismissIncoming(context, vm.peerId)
+            vm.markRead()
+        } else if (RelayConnectionService.visiblePeerId == vm.peerId) {
+            RelayConnectionService.visiblePeerId = null
+        }
+    }
+
     DisposableEffect(Unit) {
         vm.bind()
-        RelayConnectionService.isThreadVisible = true
-        vm.markRead()
+        setVisible(true)
         onDispose {
-            RelayConnectionService.isThreadVisible = false
+            setVisible(false)
             vm.unbind()
         }
     }
 
-    // isThreadVisible also has to track real Activity visibility (Home press, screen
-    // off, app-switch) — leaving ThreadScreen composed is NOT the same as the user
+    // Visibility also has to track the real Activity (Home press, screen off,
+    // app-switch) — leaving ThreadScreen composed is NOT the same as the user
     // actually looking at it. ON_STOP fires when the Activity is no longer visible at
     // all; ON_START fires when it's visible again, independent of Compose navigation.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_START -> { RelayConnectionService.isThreadVisible = true; vm.markRead() }
-                Lifecycle.Event.ON_STOP -> RelayConnectionService.isThreadVisible = false
+                Lifecycle.Event.ON_START -> setVisible(true)
+                Lifecycle.Event.ON_STOP -> setVisible(false)
                 else -> {}
             }
         }
@@ -164,10 +176,12 @@ fun ThreadScreen(
                         Text(status, style = MaterialTheme.typography.labelSmall)
                     }
                 },
-                actions = {
-                    IconButton(onClick = onNavigateToHermes) {
-                        Icon(Icons.Filled.SmartToy, contentDescription = "Hermes agent")
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "All chats")
                     }
+                },
+                actions = {
                     IconButton(onClick = onNavigateToPairing) {
                         Icon(Icons.Filled.VerifiedUser, contentDescription = "Contact / safety number")
                     }

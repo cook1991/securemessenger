@@ -140,6 +140,21 @@ class MessageDatabase(context: Context) :
         return rows
     }
 
+    /** Newest message time in [peerId]'s thread, or null if it has none. */
+    fun lastMessageDate(peerId: String): Long? {
+        writableDatabase.rawQuery("SELECT MAX(date) FROM messages WHERE peer_id = ?", arrayOf(peerId)).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+            return cursor.getLong(0)
+        }
+    }
+
+    /** Moves a thread's history to a contact's new peerId (they re-paired from a
+     * reinstalled device, which always gets a new relay identity). */
+    fun reassignPeer(oldPeerId: String, newPeerId: String) {
+        val values = ContentValues().apply { put("peer_id", newPeerId) }
+        writableDatabase.update("messages", values, "peer_id = ?", arrayOf(oldPeerId))
+    }
+
     fun markReadAckSent(id: Long) {
         val values = ContentValues().apply { put("read_ack_sent", 1) }
         writableDatabase.update("messages", values, "id = ?", arrayOf(id.toString()))

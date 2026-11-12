@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import net.spritzlive.securemessenger.R
 import net.spritzlive.securemessenger.ui.MainActivity
@@ -48,6 +49,23 @@ class HermesConnectionService : Service() {
         fun dismissIncoming(context: Context) {
             NotificationManagerCompat.from(context).cancel(HERMES_MESSAGE_NOTIFICATION_ID)
         }
+
+        /** Bumped on every new incoming message, so the chat list can refresh its
+         * Hermes row without binding to this service. */
+        val incomingVersion = MutableStateFlow(0L)
+
+        private const val SEEN_PREFS = "hermes_seen"
+        private const val KEY_LAST_SEEN = "last_seen"
+
+        /** Called while the Hermes conversation is on screen; drives the chat list's
+         * "New" label for Hermes. */
+        fun markSeen(context: Context) {
+            context.getSharedPreferences(SEEN_PREFS, Context.MODE_PRIVATE)
+                .edit().putLong(KEY_LAST_SEEN, System.currentTimeMillis()).apply()
+        }
+
+        fun lastSeen(context: Context): Long =
+            context.getSharedPreferences(SEEN_PREFS, Context.MODE_PRIVATE).getLong(KEY_LAST_SEEN, 0L)
     }
 
     private val binder = LocalBinder()
@@ -68,7 +86,8 @@ class HermesConnectionService : Service() {
         ensureChannels()
         repository = HermesRepository(applicationContext)
         repository.onIncomingMessage = {
-            if (!isScreenVisible) notifyIncoming()
+            incomingVersion.value++
+            if (isScreenVisible) markSeen(this) else notifyIncoming()
         }
     }
 

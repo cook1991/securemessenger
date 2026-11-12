@@ -30,6 +30,9 @@ private const val GCM_TAG_BITS = 128
 class HermesAuthStore(context: Context) {
     private val file = File(context.filesDir, "hermes_auth.bin")
 
+    /** Whether pairing has completed, without decrypting the token. */
+    fun isPaired(): Boolean = file.exists()
+
     /** Null until pairing has completed. */
     fun loadDeviceToken(): ByteArray? {
         val state = loadState() ?: return null

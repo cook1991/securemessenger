@@ -60,6 +60,15 @@ class HermesMessageStore(context: Context) :
         return writableDatabase.insertWithOnConflict("hermes_messages", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1L
     }
 
+    /** Newest message time, optionally only incoming ones; null if none. */
+    fun lastTimestamp(incomingOnly: Boolean = false): Long? {
+        val where = if (incomingOnly) " WHERE outgoing = 0" else ""
+        readableDatabase.rawQuery("SELECT MAX(ts) FROM hermes_messages$where", null).use { cursor ->
+            if (!cursor.moveToFirst() || cursor.isNull(0)) return null
+            return cursor.getLong(0)
+        }
+    }
+
     fun updateStatusByFrameId(frameId: String, status: HermesMessageStatus) {
         val values = ContentValues().apply { put("status", status.name) }
         writableDatabase.update("hermes_messages", values, "frame_id = ?", arrayOf(frameId))
