@@ -28,9 +28,10 @@ class HermesRepository(context: Context) {
     var onIncomingMessage: (() -> Unit)? = null
     var onNeedsPairing: (() -> Unit)? = null
 
-    val isPaired: Boolean get() = auth.loadDeviceToken() != null
+    val isPaired: Boolean get() = auth.loadConfig() != null
 
     init {
+        HermesLegacyMigration.run(auth)
         client.onStateChange = { currentState = it; onStateChange?.invoke(it) }
         client.onNeedsPairing = { onNeedsPairing?.invoke() }
         client.onAuthRejected = { onNeedsPairing?.invoke() }
@@ -52,7 +53,7 @@ class HermesRepository(context: Context) {
 
     fun connect() {
         client.connect()
-        ntfy.start()
+        auth.loadConfig()?.let { ntfy.start(it) }
     }
 
     fun disconnect() {
@@ -60,9 +61,9 @@ class HermesRepository(context: Context) {
         ntfy.stop()
     }
 
-    fun completePairing(deviceToken: ByteArray) {
-        auth.saveDeviceToken(deviceToken)
-        deviceToken.wipe()
+    fun completePairing(pairing: HermesPairing) {
+        auth.savePairing(pairing.token, pairing.config)
+        pairing.token.wipe()
     }
 
     fun send(text: String) {

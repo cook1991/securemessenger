@@ -9,10 +9,13 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.serialization.json.Json
+import net.spritzlive.securemessenger.net.hermes.HermesGatewayConfig
 
 private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 private const val WRAP_KEY_ALIAS = "securemessenger_hermes_wrap"
 private const val GCM_TAG_BITS = 128
+private val configJson = Json { ignoreUnknownKeys = true }
 
 /**
  * Keystore-backed storage for the Hermes device token and the last processed
@@ -30,8 +33,24 @@ private const val GCM_TAG_BITS = 128
 class HermesAuthStore(context: Context) {
     private val file = File(context.filesDir, "hermes_auth.bin")
 
-    /** Whether pairing has completed, without decrypting the token. */
+    /** Whether pairing has completed, without decrypting anything. */
     fun isPaired(): Boolean = file.exists()
+
+    /** The gateway this device is paired with; null until paired (or, for a device
+     * paired before settings moved out of the build, until migrated). */
+    fun loadConfig(): HermesGatewayConfig? = loadState()?.config
+
+    /** Stores a fresh pairing: token plus the gateway it belongs to. Clears any
+     * previous resume position, which belonged to the previous pairing. */
+    fun savePairing(token: ByteArray, config: HermesGatewayConfig) {
+        persist(token, null, config)
+    }
+
+    /** One-time migration for a device paired while settings were compiled in. */
+    fun saveConfig(config: HermesGatewayConfig) {
+        val state = loadState() ?: return
+        persist(state.token, state.lastId, config)
+    }
 
     /** Null until pairing has completed. */
     fun loadDeviceToken(): ByteArray? {
@@ -40,22 +59,23 @@ class HermesAuthStore(context: Context) {
     }
 
     fun saveDeviceToken(token: ByteArray) {
-        persist(token, loadState()?.lastId)
+        val state = loadState()
+        persist(token, state?.lastId, state?.config)
     }
 
     /** Null until at least one inbound `message` frame has been processed. */
     fun loadLastId(): String? = loadState()?.lastId
 
     fun saveLastId(lastId: String) {
-        val token = loadState()?.token ?: return
-        persist(token, lastId)
+        val state = loadState() ?: return
+        persist(state.token, lastId, state.config)
     }
 
     fun clear() {
         if (file.exists()) file.delete()
     }
 
-    private data class State(val token: ByteArray, val lastId: String?)
+    private data class State(val token: ByteArray, val lastId: String?, val config: HermesGatewayConfig?)
 
     private fun loadState(): State? {
         if (!file.exists()) return null
@@ -92,14 +112,26 @@ class HermesAuthStore(context: Context) {
         val token = readPayloadBlock()
         val lastIdBytes = readPayloadBlock()
         val lastId = if (lastIdBytes.isEmpty()) null else String(lastIdBytes, Charsets.UTF_8)
-        return State(token, lastId)
+        // Third block added when gateway settings moved out of the build; files
+        // written before that simply end after lastId.
+        val config = if (p < payload.size) {
+            val configBytes = readPayloadBlock()
+            if (configBytes.isEmpty()) null else configJson.decodeFromString(HermesGatewayConfig.serializer(), String(configBytes, Charsets.UTF_8))
+        } else {
+            null
+        }
+        payload.wipe()
+        return State(token, lastId, config)
     }
 
-    private fun persist(token: ByteArray, lastId: String?) {
+    private fun persist(token: ByteArray, lastId: String?, config: HermesGatewayConfig?) {
         val lastIdBytes = lastId?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        val configBytes = config?.let { configJson.encodeToString(HermesGatewayConfig.serializer(), it).toByteArray(Charsets.UTF_8) }
+            ?: ByteArray(0)
         val payload = ArrayList<Byte>()
         writeBlock(payload, token)
         writeBlock(payload, lastIdBytes)
+        writeBlock(payload, configBytes)
         val payloadBytes = payload.toByteArray()
 
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -111,7 +143,9 @@ class HermesAuthStore(context: Context) {
         val out = ArrayList<Byte>()
         writeBlock(out, iv)
         writeBlock(out, wrapped)
-        file.writeBytes(out.toByteArray())
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        tmp.writeBytes(out.toByteArray())
+        if (!tmp.renameTo(file)) error("couldn't save Hermes pairing")
     }
 
     private fun writeBlock(out: ArrayList<Byte>, bytes: ByteArray) {

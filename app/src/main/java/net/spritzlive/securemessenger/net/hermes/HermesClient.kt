@@ -45,10 +45,6 @@ private val inboundJson = Json { ignoreUnknownKeys = true }
  */
 class HermesClient(
     private val auth: HermesAuthStore,
-    private val host: String = HermesConfig.HOST,
-    private val port: Int = HermesConfig.PORT,
-    private val wsPath: String = HermesConfig.WS_PATH,
-    private val pinSha256Base64: String = HermesConfig.PIN_SHA256_B64,
 ) {
     @Volatile
     private var webSocket: WebSocket? = null
@@ -96,9 +92,12 @@ class HermesClient(
         authRejected = false
         reconnectTask?.cancel(false)
 
+        // Gateway location and pins come from setup, not the build (HermesGatewayConfig).
+        val config = auth.loadConfig()
         val token = auth.loadDeviceToken()
-        if (token == null) {
-            report("no device token stored — pairing required")
+        if (token == null || config == null) {
+            token?.wipe()
+            report("not set up — pairing required")
             onNeedsPairing?.invoke()
             return
         }
@@ -114,14 +113,14 @@ class HermesClient(
 
         // No custom SSLSocketFactory/TrustManager — platform CA validation still
         // runs unmodified. CertificatePinner below only narrows what's accepted
-        // further; see HermesConfig's doc for why that's additive, not a trust
-        // override.
-        val builder = OkHttpClient.Builder()
+        // further; see HermesGatewayConfig's doc for why that's additive, not a
+        // trust override.
+        val client = OkHttpClient.Builder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
-        buildPinner()?.let { builder.certificatePinner(it) }
-        val client = builder.build()
+            .certificatePinner(buildPinner(config))
+            .build()
         val request = Request.Builder()
-            .url("wss://$host:$port$wsPath")
+            .url(config.wsUrl())
             .header("Authorization", authHeaderValue)
             .build()
         socketActive = true
@@ -137,18 +136,12 @@ class HermesClient(
         connect()
     }
 
-    /** [pinSha256Base64] holds one or more comma-separated base64 SPKI hashes —
-     * more than one so a backup pin (e.g. the issuing CA, or a pre-generated
-     * replacement leaf key) can be rolled out ahead of a cert renewal without
-     * ever running with only a single pin that renewal would then invalidate.
-     * Null (no pinning applied) only when the config is left blank, e.g. a dev
-     * build before hermes-config.properties has real values — connect() still
-     * works, matching RelayClient's own placeholder-tolerant build. */
-    private fun buildPinner(): CertificatePinner? {
-        val pins = pinSha256Base64.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        if (pins.isEmpty()) return null
+    /** One or more base64 SPKI hashes (validation requires at least one) — more
+     * than one so a backup pin (e.g. the issuing CA, or a pre-generated replacement
+     * leaf key) can be rolled out ahead of a cert renewal. */
+    private fun buildPinner(config: HermesGatewayConfig): CertificatePinner {
         val builder = CertificatePinner.Builder()
-        for (pin in pins) builder.add(host, "sha256/$pin")
+        for (pin in config.pins) builder.add(config.host, "sha256/$pin")
         return builder.build()
     }
 

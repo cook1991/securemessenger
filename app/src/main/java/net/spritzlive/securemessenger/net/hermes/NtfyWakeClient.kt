@@ -28,21 +28,15 @@ private const val TAG = "NtfyWakeClient"
  * doesn't mean the Hermes link itself is down, and vice versa.
  *
  * Auth model matches this project's other ntfy use (vmapp's UnifiedPush
- * endpoints): there is no ntfy-side auth-file/ACL, and [authToken] is empty by
- * default — the real protection is [topic] itself being a long, CSPRNG-generated,
- * unguessable string (same entropy model as a UnifiedPush endpoint token), not a
- * human-chosen word. hermes-config.properties.example says exactly how to
- * generate it. [authToken] stays wired up as optional defense-in-depth — if an
- * ntfy auth-file/ACL is ever added server-side, set it and this sends
- * `Authorization: Bearer <authToken>` on every request — but nothing here
- * requires it, since requiring a header the server doesn't check would be
- * cosmetic, not real protection.
+ * endpoints): the real protection is the topic itself being a long,
+ * CSPRNG-generated, unguessable string. The gateway hands host, topic and an
+ * optional auth token over at pairing (HermesGatewayConfig); if a token is given,
+ * this sends `Authorization: Bearer <token>` on every request.
  */
-class NtfyWakeClient(
-    private val host: String = HermesConfig.NTFY_HOST,
-    private val topic: String = HermesConfig.NTFY_TOPIC,
-    private val authToken: String = HermesConfig.NTFY_AUTH_TOKEN,
-) {
+class NtfyWakeClient {
+    private var host: String = ""
+    private var topic: String = ""
+    private var authToken: String = ""
     var onWake: (() -> Unit)? = null
     var onStateChange: ((String) -> Unit)? = null
 
@@ -54,7 +48,12 @@ class NtfyWakeClient(
     private var reconnectTask: ScheduledFuture<*>? = null
     private var closed = false
 
-    fun start() {
+    /** Does nothing for a gateway that didn't provide wake settings. */
+    fun start(config: HermesGatewayConfig) {
+        if (!config.hasWake) return
+        host = config.ntfyHost.orEmpty()
+        topic = config.ntfyTopic.orEmpty()
+        authToken = config.ntfyAuthToken.orEmpty()
         closed = false
         reconnectTask?.cancel(false)
         openStream()

@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import net.spritzlive.securemessenger.net.hermes.HermesConnectionService
 import net.spritzlive.securemessenger.net.hermes.HermesPairingClient
 import net.spritzlive.securemessenger.net.hermes.HermesRepository
+import net.spritzlive.securemessenger.net.hermes.HermesSetupCode
 import net.spritzlive.securemessenger.storage.HermesMessage
 
 /** Same bind-to-a-foreground-service shape as SecureMessengerViewModel, pointed at
@@ -79,21 +80,26 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { repo?.send(text) }
     }
 
-    /** Exchanges the pairing code for a device token over HTTPS, stores it, then
-     * starts the Hermes connection — a failure (bad code, network error) surfaces
-     * via [pairingError] rather than throwing, since this runs off a UI click. */
-    fun submitPairingCode(code: String) {
+    /** Parses a setup code (scanned or pasted), exchanges its pairing code for a
+     * device token over pinned HTTPS, stores token + gateway settings, then starts
+     * the Hermes connection — a failure (bad code, network error) surfaces via
+     * [pairingError] rather than throwing, since this runs off a UI action. */
+    fun submitSetupCode(text: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _pairingError.value = null
+            val setup = runCatching { HermesSetupCode.parse(text) }.getOrElse { e ->
+                _pairingError.value = (e as? IllegalArgumentException)?.message ?: "That setup code couldn't be read"
+                return@launch
+            }
             // Check before spending the code: it's single-use, and redeeming it
             // with nowhere to store the token would burn it for nothing.
             val r = repo ?: run {
                 _pairingError.value = "Not connected to the Hermes service yet — try again in a moment"
                 return@launch
             }
-            HermesPairingClient().exchangeCodeForToken(code)
-                .onSuccess { token ->
-                    r.completePairing(token)
+            HermesPairingClient().exchange(setup)
+                .onSuccess { pairing ->
+                    r.completePairing(pairing)
                     _needsPairing.value = false
                     r.connect()
                 }
