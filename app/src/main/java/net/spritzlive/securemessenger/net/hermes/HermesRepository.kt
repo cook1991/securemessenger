@@ -35,9 +35,12 @@ class HermesRepository(context: Context) {
         client.onNeedsPairing = { onNeedsPairing?.invoke() }
         client.onAuthRejected = { onNeedsPairing?.invoke() }
         client.onMessage = { id, ts, text ->
-            messages.insert(id, text, outgoing = false, ts = ts, status = HermesMessageStatus.RECEIVED)
-            onMessagesChanged?.invoke()
-            onIncomingMessage?.invoke()
+            // A redelivered duplicate was already acked again by HermesClient; just
+            // don't store or announce it twice.
+            if (messages.insert(id, text, outgoing = false, ts = ts, status = HermesMessageStatus.RECEIVED)) {
+                onMessagesChanged?.invoke()
+                onIncomingMessage?.invoke()
+            }
         }
         client.onAck = { id -> messages.updateStatusByFrameId(id, HermesMessageStatus.ACKED); onMessagesChanged?.invoke() }
 

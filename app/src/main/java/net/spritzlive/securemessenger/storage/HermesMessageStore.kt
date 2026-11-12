@@ -46,7 +46,10 @@ class HermesMessageStore(context: Context) :
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
 
-    fun insert(frameId: String, text: String, outgoing: Boolean, ts: Long, status: HermesMessageStatus): Long {
+    /** Returns false if [frameId] is already stored. The gateway redelivers anything
+     * not yet acked (e.g. an ack lost on a dead socket), so duplicates are expected,
+     * not errors. */
+    fun insert(frameId: String, text: String, outgoing: Boolean, ts: Long, status: HermesMessageStatus): Boolean {
         val values = ContentValues().apply {
             put("frame_id", frameId)
             put("text", text)
@@ -54,7 +57,7 @@ class HermesMessageStore(context: Context) :
             put("ts", ts)
             put("status", status.name)
         }
-        return writableDatabase.insertOrThrow("hermes_messages", null, values)
+        return writableDatabase.insertWithOnConflict("hermes_messages", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1L
     }
 
     fun updateStatusByFrameId(frameId: String, status: HermesMessageStatus) {
