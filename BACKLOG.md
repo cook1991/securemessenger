@@ -30,3 +30,13 @@ Unprioritized feature ideas, not yet scheduled.
     3. A minimal app that redeems an invite, pairs, and exchanges one message with Android.
     4. Push notifications.
     5. Photos and receipts.
+- **Hermes: reconnect without opening the app** — found while testing the Hermes agent link, 2026-11-11.
+  - **Auto-start after a reboot or app update.** Today both connections (Eric's and Hermes) only start when the app
+    is opened, so messages wait until then. Start each connection on boot and after an update, but only if it's
+    paired, so there's never a stray "connected" notification.
+  - **Reconnect as soon as the network returns.** Listen for Android's network-available signal and reconnect Hermes
+    and ntfy right away, instead of waiting out the retry timer (up to 60s).
+  - **Retry timers stall in deep sleep.** With the screen off, a 60s retry can stretch to minutes. Affects the Eric
+    connection too.
+  - **ntfy misses pings sent while it's reconnecting.** Subscribe with `since` so they're picked up.
+  - Before testing: `adb logcat -G 16M`, since the phone's log buffer rotates in minutes.
