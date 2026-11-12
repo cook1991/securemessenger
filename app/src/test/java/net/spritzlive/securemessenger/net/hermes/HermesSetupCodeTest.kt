@@ -50,11 +50,13 @@ class HermesSetupCodeTest {
     @Test
     fun acceptsGatewayGeneratedCode() {
         val parsed = HermesSetupCode.parse(
-            "hermes-setup:1:eyJob3N0IjoicmVsYXkuc3ByaXR6bGl2ZS5uZXQiLCJwb3J0Ijo0NDMsIndzX3BhdGgiOiIvd3MiLCJwYWlyX3BhdGgiOiIvcGFpciIsInBpbnMiOlsiQTNSOFFiUU53Y2tiMnFIeHpHY25URDErYzArbTZNRHg3VEZvTVVFbzU1MD0iLCJzL3RkQU9tVXpkOHN5YVR1cWZnR3ZGY242RHpBNUNtYitWYnkxU1QrVTNZPSJdLCJjb2RlIjoiVEVTVC0wMDAwIn0",
+            "hermes-setup:1:eyJob3N0IjoicmVsYXkuc3ByaXR6bGl2ZS5uZXQiLCJwb3J0Ijo0NDMsIndzX3BhdGgiOiIvd3MiLCJwYWlyX3BhdGgiOiIvcGFpciIsInBpbnMiOlsiQTNSOFFiUU53Y2tiMnFIeHpHY25URDErYzArbTZNRHg3VEZvTVVFbzU1MD0iLCJzL3RkQU9tVXpkOHN5YVR1cWZnR3ZGY242RHpBNUNtYitWYnkxU1QrVTNZPSIsInNDa3E1VVdYamcrN21LdTlsTWhoWUY1YkdMc3k3VkkvVU5XM3RjY2RSN3c9Il0sImNvZGUiOiJURVNULTAwMDAifQ",
         )
         assertEquals("wss://relay.spritzlive.net:443/ws", parsed.config.wsUrl())
         assertEquals("https://relay.spritzlive.net:443/pair", parsed.config.pairUrl())
-        assertEquals(2, parsed.config.pins.size)
+        // Leaf, Let's Encrypt intermediate, ISRG Root YE (survives an intermediate change).
+        assertEquals(3, parsed.config.pins.size)
+        assertEquals("sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=", parsed.config.pins.last())
         assertEquals("TEST-0000", parsed.pairingCode)
     }
 
