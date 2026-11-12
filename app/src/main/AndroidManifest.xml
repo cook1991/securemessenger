@@ -41,6 +41,14 @@
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
 
+        <!-- Hermes agent link: fully separate service from RelayConnectionService
+             above, so this newer, less battle-tested feature can never take down
+             the primary contact's connection. -->
+        <service
+            android:name=".net.hermes.HermesConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+
         <receiver
             android:name=".ui.ReplyReceiver"
             android:exported="false" />

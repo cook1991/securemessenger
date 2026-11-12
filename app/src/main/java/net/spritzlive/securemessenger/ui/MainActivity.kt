@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.spritzlive.securemessenger.crypto.LibsignalSpike
 import net.spritzlive.securemessenger.pairing.ContactVerificationStore
+import net.spritzlive.securemessenger.ui.screens.HermesPairingScreen
+import net.spritzlive.securemessenger.ui.screens.HermesScreen
 import net.spritzlive.securemessenger.ui.screens.PairingScreen
 import net.spritzlive.securemessenger.ui.screens.TextSizeScreen
 import net.spritzlive.securemessenger.ui.screens.ThreadScreen
@@ -25,6 +27,8 @@ private const val TAG = "LibsignalSpike"
 private const val ROUTE_PAIRING = "pairing"
 private const val ROUTE_THREAD = "thread"
 private const val ROUTE_TEXTSIZE = "textsize"
+private const val ROUTE_HERMES = "hermes"
+private const val ROUTE_HERMES_PAIRING = "hermes_pairing"
 
 /**
  * Phase 6: real NavHost. Start destination depends on whether a verified contact
@@ -66,10 +70,23 @@ class MainActivity : ComponentActivity() {
                         ThreadScreen(
                             onNavigateToPairing = { navController.navigate(ROUTE_PAIRING) },
                             onNavigateToTextSize = { navController.navigate(ROUTE_TEXTSIZE) },
+                            onNavigateToHermes = { navController.navigate(ROUTE_HERMES) },
                         )
                     }
                     composable(ROUTE_TEXTSIZE) {
                         TextSizeScreen(onBack = { navController.popBackStack() })
+                    }
+                    composable(ROUTE_HERMES) {
+                        HermesScreen(
+                            onNavigateToPairing = { navController.navigate(ROUTE_HERMES_PAIRING) },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(ROUTE_HERMES_PAIRING) {
+                        HermesPairingScreen(
+                            onPaired = { navController.popBackStack() },
+                            onBack = { navController.popBackStack() },
+                        )
                     }
                 }
             }

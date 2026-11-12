@@ -17,6 +17,7 @@ dist/
 local.properties
 keystore.properties
 relay-config.properties
+hermes-config.properties
 maps.properties
 *.properties.local
 keystore/

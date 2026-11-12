@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,6 +79,7 @@ import java.util.Locale
 fun ThreadScreen(
     onNavigateToPairing: () -> Unit,
     onNavigateToTextSize: () -> Unit,
+    onNavigateToHermes: () -> Unit,
     vm: SecureMessengerViewModel = viewModel(),
 ) {
     val messages by vm.messages.collectAsState()
@@ -163,6 +165,9 @@ fun ThreadScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNavigateToHermes) {
+                        Icon(Icons.Filled.SmartToy, contentDescription = "Hermes agent")
+                    }
                     IconButton(onClick = onNavigateToPairing) {
                         Icon(Icons.Filled.VerifiedUser, contentDescription = "Contact / safety number")
                     }
