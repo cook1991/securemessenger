@@ -45,6 +45,19 @@ class HermesSetupCodeTest {
         assertEquals("/pair", parsed.config.pairPath)
     }
 
+    /** Produced by the real gateway's generator (2026-11-12) with a dummy pairing
+     * code — guards the app/gateway format agreement. Nothing here is secret. */
+    @Test
+    fun acceptsGatewayGeneratedCode() {
+        val parsed = HermesSetupCode.parse(
+            "hermes-setup:1:eyJob3N0IjoicmVsYXkuc3ByaXR6bGl2ZS5uZXQiLCJwb3J0Ijo0NDMsIndzX3BhdGgiOiIvd3MiLCJwYWlyX3BhdGgiOiIvcGFpciIsInBpbnMiOlsiQTNSOFFiUU53Y2tiMnFIeHpHY25URDErYzArbTZNRHg3VEZvTVVFbzU1MD0iLCJzL3RkQU9tVXpkOHN5YVR1cWZnR3ZGY242RHpBNUNtYitWYnkxU1QrVTNZPSJdLCJjb2RlIjoiVEVTVC0wMDAwIn0",
+        )
+        assertEquals("wss://relay.spritzlive.net:443/ws", parsed.config.wsUrl())
+        assertEquals("https://relay.spritzlive.net:443/pair", parsed.config.pairUrl())
+        assertEquals(2, parsed.config.pins.size)
+        assertEquals("TEST-0000", parsed.pairingCode)
+    }
+
     @Test fun rejectsWrongPrefix() = rejects(code().replace("hermes-setup:1:", "hermes-setup:2:"))
     @Test fun rejectsGarbage() = rejects(HermesSetupCode.PREFIX + "!!!not base64!!!")
     @Test fun rejectsNoPins() = rejects(code(pins = emptyList()))
