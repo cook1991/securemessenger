@@ -25,6 +25,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import net.spritzlive.securemessenger.net.hermes.HermesConnectionService
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +62,30 @@ fun HermesScreen(
     val needsPairing by vm.needsPairing.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    // Composed isn't the same as visible (Home, screen off): track real Activity
+    // visibility too, same as ThreadScreen does for the primary contact.
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        fun setVisible(visible: Boolean) {
+            HermesConnectionService.isScreenVisible = visible
+            if (visible) HermesConnectionService.dismissIncoming(context)
+        }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> setVisible(true)
+                Lifecycle.Event.ON_STOP -> setVisible(false)
+                else -> {}
+            }
+        }
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) setVisible(true)
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            HermesConnectionService.isScreenVisible = false
+        }
+    }
 
     LaunchedEffect(needsPairing) {
         if (needsPairing) onNavigateToPairing()

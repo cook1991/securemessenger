@@ -1,11 +1,14 @@
 package net.spritzlive.securemessenger.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import net.spritzlive.securemessenger.net.hermes.HermesConnectionService
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -38,8 +41,25 @@ private const val ROUTE_HERMES_PAIRING = "hermes_pairing"
  * the thread's top bar afterward too (contact info / re-pair / safety number).
  */
 class MainActivity : ComponentActivity() {
+    // Set by a tap on the Hermes new-message notification, on cold start (onCreate)
+    // or with the Activity already running (onNewIntent, launchMode=singleTop).
+    private val openHermesRequested = mutableStateOf(false)
+
+    private fun consumeOpenHermes(intent: Intent?) {
+        if (intent?.getBooleanExtra(HermesConnectionService.EXTRA_OPEN_HERMES, false) == true) {
+            intent.removeExtra(HermesConnectionService.EXTRA_OPEN_HERMES)
+            openHermesRequested.value = true
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        consumeOpenHermes(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumeOpenHermes(intent)
         setContent {
             val fontScale by TextSizePreference.flow(applicationContext).collectAsState(initial = SENIOR_FONT_SCALE)
 
@@ -93,6 +113,14 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack(ROUTE_HERMES, inclusive = true) },
                             vm = viewModel(viewModelStoreOwner = this@MainActivity),
                         )
+                    }
+                }
+
+                val openHermes by openHermesRequested
+                androidx.compose.runtime.LaunchedEffect(openHermes) {
+                    if (openHermes) {
+                        navController.navigate(ROUTE_HERMES) { launchSingleTop = true }
+                        openHermesRequested.value = false
                     }
                 }
             }
