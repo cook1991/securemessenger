@@ -19,8 +19,9 @@ private const val HMAC_KEY_LEN_BYTES = 32
  * Robolectric.
  */
 object HermesHmac {
-    /** [deviceToken] is the permanent token from pairing — its raw UTF-8 bytes are
-     * the HKDF input keying material. No salt (HKDF's defined behavior for a
+    /** [deviceToken] is the permanent token from pairing as raw bytes (hex-decoded
+     * from the wire by HermesTokenCodec, never the UTF-8 of its hex digits) — the
+     * HKDF input keying material, same bytes the gateway derives from. No salt (HKDF's defined behavior for a
      * missing salt: treated as a zero-filled block), since the token itself is
      * already a high-entropy secret pulled from the gateway's own handshake. */
     fun deriveSigningKey(deviceToken: ByteArray): ByteArray {

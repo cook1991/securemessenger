@@ -44,7 +44,7 @@ class HermesPairingClient {
             }
             val responseBody = response.body?.string() ?: error("empty pairing response")
             val parsed = Json.decodeFromString(PairResponse.serializer(), responseBody)
-            parsed.token.toByteArray(Charsets.UTF_8)
+            HermesTokenCodec.decodeHex(parsed.token)
         }
     }
 }

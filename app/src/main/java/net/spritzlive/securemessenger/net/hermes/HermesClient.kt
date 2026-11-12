@@ -92,10 +92,10 @@ class HermesClient(
         // The per-message HMAC proves authenticity of each frame once a socket
         // exists, but says nothing about who's allowed to open the socket in the
         // first place — the gateway needs the token itself, on the handshake,
-        // to identify this device before any frame has been exchanged. OkHttp's
-        // Headers require a String, so there's no avoiding materializing the
-        // token as one for this one call; it's not retained past this point.
-        val authHeaderValue = "Bearer " + String(token, Charsets.UTF_8)
+        // to identify this device before any frame has been exchanged. The stored
+        // token is raw bytes; the wire form is hex (see HermesTokenCodec). OkHttp's
+        // Headers require a String, so it's materialized once here, not retained.
+        val authHeaderValue = "Bearer " + HermesTokenCodec.encodeHex(token)
         token.wipe()
 
         // No custom SSLSocketFactory/TrustManager — platform CA validation still
