@@ -49,10 +49,6 @@
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
 
-        <receiver
-            android:name=".ui.ReplyReceiver"
-            android:exported="false" />
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="net.spritzlive.securemessenger.fileprovider"
