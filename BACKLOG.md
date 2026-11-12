@@ -15,6 +15,11 @@ Unprioritized feature ideas, not yet scheduled.
   setup is a one-time setup code (see docs/hermes-setup-code.md). Remaining: Kenneth's gateway must issue setup
   codes and return the ntfy topic from `/pair` before anyone else can set up Hermes. No longer blocks a store
   release.
+  - **Next: real setup test on Jason's spare phone.** Gateway format is agreed (3-pin sample passes, commit
+    `940f5cc`). Install the app fresh, back out of "Add contact" to the empty Chats list, menu → "Set up AI
+    agent", scan a real setup code from Kenneth. Check: Hermes appears in the list, messages flow both ways,
+    `/pair` handed over the ntfy topic (wake-ups arrive; `NtfyWakeClient: ntfy stream open` in logcat), and
+    the device gets revoked on the gateway afterwards if it's only a test phone.
 - **Server vs. local mode** — let two people choose server-relay or fully local/direct connection.
 - **iOS port** — so Bill (a third person, in Texas, on iPhone) can use it. Researched 2026-11-07; nothing started.
   - **Depends on "Multiple pairing" above:** Jason's app pairs with only one person (Eric) today, and the relay is
