@@ -44,7 +44,7 @@ class HermesRepository(context: Context) {
         ntfy.onStateChange = { line -> onStateChange?.invoke("ntfy: $line") }
         // Purely a "go check" signal — reconnect (which also triggers a `resume`)
         // is the only reaction; no content ever travels through ntfy itself.
-        ntfy.onWake = { client.connect() }
+        ntfy.onWake = { client.wake() }
     }
 
     fun connect() {

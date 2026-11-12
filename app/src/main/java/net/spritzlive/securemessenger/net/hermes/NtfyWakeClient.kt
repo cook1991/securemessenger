@@ -1,6 +1,9 @@
 package net.spritzlive.securemessenger.net.hermes
 
 import android.util.Log
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -94,8 +97,7 @@ class NtfyWakeClient(
                     try {
                         while (!closed) {
                             val line = source.readUtf8Line() ?: break
-                            if (line.isBlank()) continue
-                            onWake?.invoke()
+                            if (isWakeEvent(line)) onWake?.invoke()
                         }
                     } catch (e: IOException) {
                         if (!closed) report("ntfy stream read failed: ${e.javaClass.simpleName}")
@@ -106,6 +108,17 @@ class NtfyWakeClient(
                 }
             }
         })
+    }
+
+    /** ntfy's JSON stream also emits `open` and a `keepalive` every ~45s; only a
+     * published `message` is a wake. Reads the `event` field alone — the rest of
+     * the line is never inspected or logged. */
+    private fun isWakeEvent(line: String): Boolean {
+        if (line.isBlank()) return false
+        val event = runCatching {
+            Json.parseToJsonElement(line).jsonObject["event"]?.jsonPrimitive?.content
+        }.getOrNull()
+        return event == "message"
     }
 
     private fun scheduleReconnect() {

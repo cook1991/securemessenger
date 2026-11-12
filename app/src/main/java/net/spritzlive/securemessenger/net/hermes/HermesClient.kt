@@ -50,6 +50,7 @@ class HermesClient(
     private val wsPath: String = HermesConfig.WS_PATH,
     private val pinSha256Base64: String = HermesConfig.PIN_SHA256_B64,
 ) {
+    @Volatile
     private var webSocket: WebSocket? = null
     private var signingKey: ByteArray? = null
 
@@ -81,7 +82,16 @@ class HermesClient(
     private var intentionalClose = false
     private var authRejected = false
 
+    // True from connect() until the current socket fails/closes. Without this, every
+    // connect() call (e.g. each ntfy wake) opened another socket on top of the live
+    // one and the old ones were never closed — seen live as a new "ws open" every
+    // 45s and five simultaneous failures when the gateway restarted.
+    private var socketActive = false
+
+    /** Opens the link unless a socket is already open or connecting. */
+    @Synchronized
     fun connect() {
+        if (socketActive) return
         intentionalClose = false
         authRejected = false
         reconnectTask?.cancel(false)
@@ -114,7 +124,17 @@ class HermesClient(
             .url("wss://$host:$port$wsPath")
             .header("Authorization", authHeaderValue)
             .build()
+        socketActive = true
         webSocket = client.newWebSocket(request, listener)
+    }
+
+    /** An external hint (ntfy) that something is waiting. A live socket already
+     * receives it, so this only skips the remaining backoff when we're between
+     * reconnect attempts. */
+    @Synchronized
+    fun wake() {
+        if (socketActive || intentionalClose || authRejected) return
+        connect()
     }
 
     /** [pinSha256Base64] holds one or more comma-separated base64 SPKI hashes —
@@ -132,9 +152,11 @@ class HermesClient(
         return builder.build()
     }
 
+    @Synchronized
     fun close() {
         intentionalClose = true
         cancelAllTimers()
+        socketActive = false
         webSocket?.close(1000, "client closing")
         signingKey?.wipe()
         signingKey = null
@@ -165,12 +187,16 @@ class HermesClient(
         webSocket?.send(Json.encodeToString(HermesFrame.serializer(), frame))
         pongTimeoutTask?.cancel(false)
         pongTimeoutTask = scheduler.schedule({
-            report("pong timeout — reconnecting")
-            // WebSocket.cancel() never invokes listener callbacks (per OkHttp's own
-            // contract), unlike close()/onFailure — so the reconnect has to be
-            // driven explicitly from here rather than relying on onClosed/onFailure.
-            webSocket?.cancel()
-            scheduleReconnect()
+            synchronized(this) {
+                report("pong timeout — reconnecting")
+                // Detach before cancel(): any callback the dead socket still fires
+                // is then ignored as stale rather than scheduling a second reconnect.
+                val dead = webSocket
+                webSocket = null
+                socketActive = false
+                dead?.cancel()
+                scheduleReconnect()
+            }
         }, PONG_TIMEOUT_MS, TimeUnit.MILLISECONDS)
     }
 
@@ -248,28 +274,51 @@ class HermesClient(
         reconnectTask = scheduler.schedule({ connect() }, backoff.nextDelayMs(), TimeUnit.MILLISECONDS)
     }
 
+    // Every callback first checks it came from the current socket: a replaced or
+    // timed-out socket's late events must not schedule reconnects or deliver frames.
     private val listener = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) = onSocketOpened()
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            synchronized(this@HermesClient) {
+                if (webSocket !== this@HermesClient.webSocket) { webSocket.cancel(); return }
+                onSocketOpened()
+            }
+        }
 
         // Never logs the raw frame text — a message frame's text is this device's
         // (or Hermes's) actual chat content, which doesn't belong in logcat even
         // though this link isn't E2E-encrypted on top of TLS.
-        override fun onMessage(webSocket: WebSocket, text: String) = handleFrame(text)
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (webSocket !== this@HermesClient.webSocket) return
+            handleFrame(text)
+        }
+
+        // The gateway initiating a close only reaches onClosed once we answer it.
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(code, null)
+        }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            report("ws failure: ${t.javaClass.simpleName}: ${t.message}")
-            scheduleReconnect()
+            synchronized(this@HermesClient) {
+                if (webSocket !== this@HermesClient.webSocket) return
+                socketActive = false
+                report("ws failure: ${t.javaClass.simpleName}: ${t.message}")
+                scheduleReconnect()
+            }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            report("ws closed: $code $reason")
-            if (code == CLOSE_CODE_UNAUTHORIZED) {
-                authRejected = true
-                HermesSecurityLog.authRejected()
-                onAuthRejected?.invoke()
-                return
+            synchronized(this@HermesClient) {
+                if (webSocket !== this@HermesClient.webSocket) return
+                socketActive = false
+                report("ws closed: $code $reason")
+                if (code == CLOSE_CODE_UNAUTHORIZED) {
+                    authRejected = true
+                    HermesSecurityLog.authRejected()
+                    onAuthRejected?.invoke()
+                    return
+                }
+                scheduleReconnect()
             }
-            scheduleReconnect()
         }
     }
 
