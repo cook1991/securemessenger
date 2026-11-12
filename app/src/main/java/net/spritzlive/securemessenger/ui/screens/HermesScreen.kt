@@ -25,7 +25,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import net.spritzlive.securemessenger.storage.HermesMessage
 import net.spritzlive.securemessenger.ui.HermesViewModel
 import java.text.SimpleDateFormat
@@ -51,18 +49,13 @@ import java.util.Locale
 fun HermesScreen(
     onNavigateToPairing: () -> Unit,
     onBack: () -> Unit,
-    vm: HermesViewModel = viewModel(),
+    vm: HermesViewModel,
 ) {
     val messages by vm.messages.collectAsState()
     val status by vm.status.collectAsState()
     val needsPairing by vm.needsPairing.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
-
-    DisposableEffect(Unit) {
-        vm.bind()
-        onDispose { vm.unbind() }
-    }
 
     LaunchedEffect(needsPairing) {
         if (needsPairing) onNavigateToPairing()

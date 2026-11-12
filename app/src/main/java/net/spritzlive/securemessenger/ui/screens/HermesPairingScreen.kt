@@ -1,5 +1,6 @@
 package net.spritzlive.securemessenger.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +22,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import net.spritzlive.securemessenger.ui.HermesViewModel
 
 /** Enter the one-time pairing code the gateway operator showed you; exchanged over
@@ -32,8 +32,12 @@ import net.spritzlive.securemessenger.ui.HermesViewModel
 fun HermesPairingScreen(
     onPaired: () -> Unit,
     onBack: (() -> Unit)?,
-    vm: HermesViewModel = viewModel(),
+    vm: HermesViewModel,
 ) {
+    // System back would land on HermesScreen, which immediately re-opens this
+    // screen while unpaired — route it through onBack (which skips past it) instead.
+    if (onBack != null) BackHandler(onBack = onBack)
+
     var code by rememberSaveable { mutableStateOf("") }
     val error by vm.pairingError.collectAsState()
     val needsPairing by vm.needsPairing.collectAsState()

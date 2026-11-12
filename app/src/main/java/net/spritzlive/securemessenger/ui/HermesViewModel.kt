@@ -56,8 +56,11 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun bind() {
-        if (bound) return
+    // Bound for this ViewModel's whole lifetime, not per-screen: it's shared by
+    // HermesScreen and HermesPairingScreen (Activity-scoped, see MainActivity), and
+    // tying the binding to either screen's composition would drop `repo` mid-pairing
+    // when navigating between them — losing the freshly-issued token.
+    init {
         val app = getApplication<Application>()
         val intent = Intent(app, HermesConnectionService::class.java)
         ContextCompat.startForegroundService(app, intent)
@@ -65,7 +68,7 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
         bound = true
     }
 
-    fun unbind() {
+    private fun unbind() {
         if (!bound) return
         getApplication<Application>().unbindService(connection)
         bound = false
@@ -82,11 +85,17 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
     fun submitPairingCode(code: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _pairingError.value = null
+            // Check before spending the code: it's single-use, and redeeming it
+            // with nowhere to store the token would burn it for nothing.
+            val r = repo ?: run {
+                _pairingError.value = "Not connected to the Hermes service yet — try again in a moment"
+                return@launch
+            }
             HermesPairingClient().exchangeCodeForToken(code)
                 .onSuccess { token ->
-                    repo?.completePairing(token)
+                    r.completePairing(token)
                     _needsPairing.value = false
-                    repo?.connect()
+                    r.connect()
                 }
                 .onFailure { e -> _pairingError.value = e.message ?: "pairing failed" }
         }

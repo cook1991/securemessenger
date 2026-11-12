@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -76,16 +77,21 @@ class MainActivity : ComponentActivity() {
                     composable(ROUTE_TEXTSIZE) {
                         TextSizeScreen(onBack = { navController.popBackStack() })
                     }
+                    // Activity-scoped, not per-route: both Hermes screens must share one
+                    // instance (and its service binding) or the pairing screen gets a
+                    // fresh, unbound copy that can't store the token it redeems.
                     composable(ROUTE_HERMES) {
                         HermesScreen(
                             onNavigateToPairing = { navController.navigate(ROUTE_HERMES_PAIRING) },
                             onBack = { navController.popBackStack() },
+                            vm = viewModel(viewModelStoreOwner = this@MainActivity),
                         )
                     }
                     composable(ROUTE_HERMES_PAIRING) {
                         HermesPairingScreen(
                             onPaired = { navController.popBackStack() },
-                            onBack = { navController.popBackStack() },
+                            onBack = { navController.popBackStack(ROUTE_HERMES, inclusive = true) },
+                            vm = viewModel(viewModelStoreOwner = this@MainActivity),
                         )
                     }
                 }
