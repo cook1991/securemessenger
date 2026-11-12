@@ -89,6 +89,13 @@ class HermesClient(
             return
         }
         signingKey = HermesHmac.deriveSigningKey(token)
+        // The per-message HMAC proves authenticity of each frame once a socket
+        // exists, but says nothing about who's allowed to open the socket in the
+        // first place — the gateway needs the token itself, on the handshake,
+        // to identify this device before any frame has been exchanged. OkHttp's
+        // Headers require a String, so there's no avoiding materializing the
+        // token as one for this one call; it's not retained past this point.
+        val authHeaderValue = "Bearer " + String(token, Charsets.UTF_8)
         token.wipe()
 
         // No custom SSLSocketFactory/TrustManager — platform CA validation still
@@ -99,7 +106,10 @@ class HermesClient(
             .readTimeout(0, TimeUnit.MILLISECONDS)
         buildPinner()?.let { builder.certificatePinner(it) }
         val client = builder.build()
-        val request = Request.Builder().url("wss://$host:$port$wsPath").build()
+        val request = Request.Builder()
+            .url("wss://$host:$port$wsPath")
+            .header("Authorization", authHeaderValue)
+            .build()
         webSocket = client.newWebSocket(request, listener)
     }
 
