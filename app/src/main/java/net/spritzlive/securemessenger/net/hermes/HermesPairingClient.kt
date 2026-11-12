@@ -14,6 +14,14 @@ private data class PairRequest(val code: String)
 @Serializable
 private data class PairResponse(val token: String)
 
+// The gateway's success body carries fields beyond `token`; strict parsing threw
+// on them after the single-use code had already been redeemed.
+private val json = Json { ignoreUnknownKeys = true }
+
+/** Shown in the UI instead of exception text: kotlinx.serialization messages
+ * embed the raw response body, which on a 2xx is the device token itself. */
+class HermesPairingException(message: String) : Exception(message)
+
 /**
  * One-shot HTTPS exchange of a pairing code (shown to the person by the gateway
  * operator, entered once) for a permanent device token. Plain OkHttp over HTTPS —
@@ -39,12 +47,16 @@ class HermesPairingClient {
             .post(body)
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                error("pairing exchange failed: HTTP ${response.code}")
+            when {
+                response.code == 403 -> throw HermesPairingException("Code is invalid or expired")
+                !response.isSuccessful -> throw HermesPairingException("Pairing failed (HTTP ${response.code})")
             }
-            val responseBody = response.body?.string() ?: error("empty pairing response")
-            val parsed = Json.decodeFromString(PairResponse.serializer(), responseBody)
-            HermesTokenCodec.decodeHex(parsed.token)
+            val responseBody = response.body?.string()
+                ?: throw HermesPairingException("Pairing failed: empty response")
+            val tokenHex = runCatching { json.decodeFromString(PairResponse.serializer(), responseBody).token }
+                .getOrElse { throw HermesPairingException("Pairing failed: unexpected response format") }
+            runCatching { HermesTokenCodec.decodeHex(tokenHex) }
+                .getOrElse { throw HermesPairingException("Pairing failed: token is not valid hex") }
         }
     }
 }

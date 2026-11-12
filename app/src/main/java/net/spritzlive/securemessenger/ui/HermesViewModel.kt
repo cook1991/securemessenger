@@ -97,7 +97,14 @@ class HermesViewModel(application: Application) : AndroidViewModel(application) 
                     _needsPairing.value = false
                     r.connect()
                 }
-                .onFailure { e -> _pairingError.value = e.message ?: "pairing failed" }
+                .onFailure { e ->
+                    // Never surface arbitrary exception text — see HermesPairingException.
+                    _pairingError.value = when (e) {
+                        is net.spritzlive.securemessenger.net.hermes.HermesPairingException -> e.message
+                        is java.io.IOException -> "Couldn't reach the Hermes gateway (${e.javaClass.simpleName})"
+                        else -> "Pairing failed (${e.javaClass.simpleName})"
+                    }
+                }
         }
     }
 

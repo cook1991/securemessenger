@@ -26,6 +26,10 @@ private const val PONG_TIMEOUT_MS = 10_000L
  * convention and needs confirming against the real Hermes gateway once it exists. */
 private const val CLOSE_CODE_UNAUTHORIZED = 4001
 
+// Extra fields from the gateway are tolerated rather than dropping the whole frame.
+// Safe: the HMAC covers only id/ts/text, so unknown fields were never trusted anyway.
+private val inboundJson = Json { ignoreUnknownKeys = true }
+
 /**
  * WSS client for the Hermes relay link. Same OkHttp WebSocket + hand-rolled
  * reconnect-with-backoff shape as RelayClient, but a different protocol: plain
@@ -196,7 +200,7 @@ class HermesClient(
     }
 
     private fun handleFrame(text: String) {
-        val frame = runCatching { Json.decodeFromString(HermesFrame.serializer(), text) }
+        val frame = runCatching { inboundJson.decodeFromString(HermesFrame.serializer(), text) }
             .getOrElse {
                 HermesSecurityLog.malformedFrame("unparseable frame")
                 return
