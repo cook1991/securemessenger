@@ -31,7 +31,6 @@ class HermesRepository(context: Context) {
     val isPaired: Boolean get() = auth.loadConfig() != null
 
     init {
-        HermesLegacyMigration.run(auth)
         client.onStateChange = { currentState = it; onStateChange?.invoke(it) }
         client.onNeedsPairing = { onNeedsPairing?.invoke() }
         client.onAuthRejected = { onNeedsPairing?.invoke() }

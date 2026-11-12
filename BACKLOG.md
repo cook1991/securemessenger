@@ -5,19 +5,16 @@ Unprioritized feature ideas, not yet scheduled.
 - **App lock on open** — require a code/PIN every time the app is opened.
 - **Voice / video calling.**
 - **Distress code** — a code that wipes all data/messages when entered.
-- **Multiple pairing + chat list** — pair with more than one other person. Jason's design (2026-11-12): the home
+- **Multiple pairing + chat list** — DONE 2026-11-12 (commit `175290f`). Pair with more than one other person. Jason's design (2026-11-12): the home
   screen is a list of chats (Eric, Joe, Hermes...); tap one to open that conversation.
   - Existing Eric history and Signal session must carry over with no re-pairing, and Eric's phone (one contact) must
     keep working across the upgrade.
   - Notifications name the contact but never show message text.
   - Check the relay: it's configured for two people today.
-- **One app for everyone; Hermes is opt-in** — Jason's ask (2026-11-12): a single store build. Nobody sees Hermes
-  unless they set up their own agent; it then appears as a chat in the list.
-  - Remove the gateway config and ntfy topic from the build (today they're compiled in from
-    hermes-config.properties, so a store release would leak the topic).
-  - Setup supplies them instead, e.g. a setup QR/link from the gateway with host + pins + one-time code, and the
-    `/pair` response returns the ntfy topic over the pinned connection. Needs Kenneth's side to match.
-  - **Blocks the next store release:** don't publish while Hermes config is still compiled in.
+- **One app for everyone; Hermes is opt-in** — app side DONE 2026-11-12: no Hermes settings in the build;
+  setup is a one-time setup code (see docs/hermes-setup-code.md). Remaining: Kenneth's gateway must issue setup
+  codes and return the ntfy topic from `/pair` before anyone else can set up Hermes. No longer blocks a store
+  release.
 - **Server vs. local mode** — let two people choose server-relay or fully local/direct connection.
 - **iOS port** — so Bill (a third person, in Texas, on iPhone) can use it. Researched 2026-11-07; nothing started.
   - **Depends on "Multiple pairing" above:** Jason's app pairs with only one person (Eric) today, and the relay is

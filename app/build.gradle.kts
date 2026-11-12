@@ -25,12 +25,6 @@ val relayConfigProperties = Properties().apply {
     if (relayConfigFile.exists()) load(FileInputStream(relayConfigFile))
 }
 
-// Same reasoning, same git-ignored convention, for the Hermes gateway's coordinates.
-val hermesConfigFile = rootProject.file("hermes-config.properties")
-val hermesConfigProperties = Properties().apply {
-    if (hermesConfigFile.exists()) load(FileInputStream(hermesConfigFile))
-}
-
 android {
     namespace = "net.spritzlive.securemessenger"
     compileSdk = 36
@@ -68,18 +62,6 @@ android {
             "String", "RELAY_CERT_PEM",
             "\"${relayConfigProperties.getProperty("relay.certPem", "").replace("\n", "\\n")}\""
         )
-
-        buildConfigField("String", "HERMES_HOST", "\"${hermesConfigProperties.getProperty("hermes.host", "")}\"")
-        buildConfigField("int", "HERMES_PORT", hermesConfigProperties.getProperty("hermes.port", "443"))
-        buildConfigField("String", "HERMES_WS_PATH", "\"${hermesConfigProperties.getProperty("hermes.wsPath", "/ws")}\"")
-        buildConfigField("String", "HERMES_PAIR_URL", "\"${hermesConfigProperties.getProperty("hermes.pairUrl", "")}\"")
-        // One or more comma-separated base64 SPKI sha256 pins — include a backup
-        // pin (e.g. the issuing CA's) alongside the leaf's, so a Let's Encrypt
-        // renewal doesn't brick the pin the day it rotates.
-        buildConfigField("String", "HERMES_PIN_SHA256_B64", "\"${hermesConfigProperties.getProperty("hermes.pinSha256Base64", "")}\"")
-        buildConfigField("String", "HERMES_NTFY_HOST", "\"${hermesConfigProperties.getProperty("hermes.ntfyHost", "")}\"")
-        buildConfigField("String", "HERMES_NTFY_TOPIC", "\"${hermesConfigProperties.getProperty("hermes.ntfyTopic", "")}\"")
-        buildConfigField("String", "HERMES_NTFY_AUTH_TOKEN", "\"${hermesConfigProperties.getProperty("hermes.ntfyAuthToken", "")}\"")
     }
 
     signingConfigs {
